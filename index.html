@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Study Buddy AI - Vector RAG & Folder Isolated Learning</title>
+    <meta name="description" content="Intelligent Study Companion with isolated folder organization, high-precision Gemini Vector RAG, interactive AI Tutoring, and spaced recall quizzes." />
+    <meta property="og:title" content="Study Buddy AI - Vector RAG & Folder Isolated Learning" />
+    <meta property="og:description" content="Intelligent Study Companion with isolated folder organization, high-precision Gemini Vector RAG, interactive AI Tutoring, and spaced recall quizzes." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#4F46E5" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="StudyBuddy" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script>
+      // Gracefully silence harmless Vite dev-server HMR WebSocket closures in AI Studio preview iframe
+      window.addEventListener('error', function(event) {
+        if (
+          event &&
+          event.message &&
+          (event.message.indexOf('WebSocket') !== -1 || event.message.indexOf('[vite]') !== -1)
+        ) {
+          event.stopImmediatePropagation();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(event) {
+        if (
+          event &&
+          event.reason &&
+          (String(event.reason).indexOf('WebSocket') !== -1 || String(event.reason).indexOf('[vite]') !== -1)
+        ) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      });
+    </script>
+  </head>
+  <body class="bg-[#F5F7FC] text-[#172033] antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

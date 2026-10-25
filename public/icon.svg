@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#4338CA" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#grad)" />
+  <g filter="url(#shadow)">
+    <!-- Graduation Cap Board -->
+    <polygon points="256,120 420,205 256,290 92,205" fill="#FFFFFF" />
+    <!-- Cap Lower Band -->
+    <path d="M152,240 L152,310 C152,350 360,350 360,310 L360,240 L256,294 Z" fill="#EEF2FF" />
+    <!-- Tassel Cord -->
+    <path d="M410,210 C410,270 428,290 428,335" stroke="#FDE047" stroke-width="8" stroke-linecap="round" fill="none" />
+    <circle cx="428" cy="345" r="10" fill="#EAB308" />
+    <!-- AI Sparkle Motif -->
+    <path d="M370,110 L378,132 L400,140 L378,148 L370,170 L362,148 L340,140 L362,132 Z" fill="#FDE047" />
+    <!-- Open Book Pages Motif -->
+    <path d="M170,390 C210,380 256,395 256,395 C256,395 302,380 342,390 L342,420 C302,410 256,425 256,425 C256,425 210,410 170,420 Z" fill="#FFFFFF" opacity="0.9" />
+  </g>
+</svg>
