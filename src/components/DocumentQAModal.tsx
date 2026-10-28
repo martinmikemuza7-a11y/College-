@@ -41,7 +41,6 @@ export const DocumentQAModal: React.FC<DocumentQAModalProps> = ({
         folderId: material.folderId,
         selectedDocumentIds: [material.id],
         questionCount: 4,
-        difficulty: 'medium',
       });
       setQuestions(res.questions || []);
       setRevealedAnswers({});
