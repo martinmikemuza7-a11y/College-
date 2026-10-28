@@ -85,9 +85,12 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
       filename: 'psychology_lecture.txt',
       courseId: 'course_dedup_test',
       folderId: null,
+      ownerId: 'usr_test',
       pageOrSlide: 1,
+      chunkIndex: 0,
       text: sanitizeEducationalContent(PSYCHOLOGY_TEXT),
       sourceExcerpt: PSYCHOLOGY_TEXT.slice(0, 220),
+      tokenEstimate: 50,
     };
     const firstBatch = generateDomainGroundedQuestions([sourceChunk], 5, 'medium', undefined, 'notes_based');
     const secondBatch = generateDomainGroundedQuestions(
