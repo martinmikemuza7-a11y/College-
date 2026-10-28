@@ -13,6 +13,8 @@ export interface GenerateQuizOptions {
   pastPaperIds?: string[];
   crossCourseIds?: string[];
   questionCount?: number;
+  alreadyGeneratedCount?: number;
+  previousQuestions?: string[];
   difficulty?: 'easy' | 'medium' | 'hard';
   questionTypes?: QuestionType[];
   questionStyle?: string;
@@ -210,6 +212,52 @@ export function validateAndNormalizeQuestion(
   };
 }
 
+const QUESTION_COMPARISON_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'based', 'by', 'can',
+  'could', 'describe', 'describes', 'did', 'do', 'does', 'explain', 'for', 'from',
+  'how', 'in', 'into', 'is', 'it', 'its', 'of', 'on', 'or', 'the', 'their', 'this',
+  'those', 'to', 'was', 'were', 'what', 'when', 'where', 'which', 'who', 'why',
+  'with', 'would', 'following', 'accurately', 'according', 'document', 'notes',
+]);
+
+export function normalizeQuestionForDeduplication(question: string): string {
+  return String(question || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function isDuplicateQuestion(question: string, existingQuestions: string[]): boolean {
+  const normalized = normalizeQuestionForDeduplication(question);
+  if (!normalized) return true;
+
+  const tokens = (value: string) =>
+    new Set(value.split(' ').filter((token) => token.length > 2 && !QUESTION_COMPARISON_STOP_WORDS.has(token)));
+  const candidateTokens = tokens(normalized);
+
+  return existingQuestions.some((existing) => {
+    const other = normalizeQuestionForDeduplication(existing);
+    if (!other) return false;
+    if (normalized === other) return true;
+
+    const otherTokens = tokens(other);
+    if (Math.min(candidateTokens.size, otherTokens.size) < 5) return false;
+
+    const shared = [...candidateTokens].filter((token) => otherTokens.has(token)).length;
+    const union = candidateTokens.size + otherTokens.size - shared;
+    return shared / union >= 0.82 || shared / Math.min(candidateTokens.size, otherTokens.size) >= 0.9;
+  });
+}
+
+export function calculateQuestionBatchSize(targetCount: number, alreadyGeneratedCount: number): number {
+  const normalizedTarget = Number.isFinite(targetCount) ? Math.max(0, Math.floor(targetCount)) : 0;
+  const normalizedGenerated = Number.isFinite(alreadyGeneratedCount) ? Math.max(0, Math.floor(alreadyGeneratedCount)) : 0;
+  return Math.min(5, Math.max(0, normalizedTarget - normalizedGenerated));
+}
+
 export async function generateQuizQuestions(options: GenerateQuizOptions): Promise<GeneratedQuizBatch> {
   const {
     courseId,
@@ -220,12 +268,22 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     pastPaperIds,
     crossCourseIds,
     questionCount = 5,
+    alreadyGeneratedCount: requestedAlreadyGeneratedCount,
+    previousQuestions = [],
     difficulty = 'medium',
     questionTypes,
     questionStyle,
     topic,
     batchIndex = 0,
   } = options;
+
+  const targetQuestionCount = Number.isFinite(questionCount) ? Math.max(0, Math.floor(questionCount)) : 5;
+  const alreadyGeneratedCount = Number.isFinite(requestedAlreadyGeneratedCount)
+    ? Math.max(0, Math.floor(requestedAlreadyGeneratedCount as number))
+    : Math.max(0, batchIndex * 5);
+  const priorQuestionTexts = Array.isArray(previousQuestions)
+    ? previousQuestions.filter((question): question is string => typeof question === 'string')
+    : [];
 
   // 1. Strict Course Isolation: Only allow documents from the selected course (unless explicitly allowed via cross-course)
   const allowedCourseIds = crossCourseIds && crossCourseIds.length > 0
@@ -298,7 +356,7 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
       folderId,
       ownerId,
       query: topic.trim(),
-      topK: Math.max(10, questionCount * 2),
+      topK: Math.max(10, targetQuestionCount * 2),
     });
     rawChunks = ragRes.results.map((r) => r.chunk).filter((c) => allowedCourseIds.includes(c.courseId));
   } else {
@@ -326,12 +384,14 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     );
   }
 
-  // 4. Batch sizing: 5 per batch for responsive generation and continuation
-  const alreadyGeneratedEstimate = batchIndex * 5;
-  const remainingToGenerate = Math.max(1, questionCount - alreadyGeneratedEstimate);
-  const batchSize = Math.min(remainingToGenerate, 5);
+  // 4. Batch sizing: questionCount is the overall requested total; alreadyGeneratedCount
+  // records how many unique questions have actually been accepted by the caller.
+  const batchSize = calculateQuestionBatchSize(targetQuestionCount, alreadyGeneratedCount);
+  if (batchSize === 0) {
+    return { questions: [], totalGenerated: 0, requestedCount: targetQuestionCount, hasMore: false, batchIndex, mode };
+  }
 
-  const offset = (batchIndex * batchSize) % Math.max(1, chunks.length);
+  const offset = (batchIndex * 5) % Math.max(1, chunks.length);
   const chunkBatch = chunks.length > 0
     ? [...chunks.slice(offset), ...chunks.slice(0, offset)]
     : [];
@@ -370,6 +430,10 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
           ? questionTypes.join(', ')
           : 'multiple_choice, true_false, fill_in_blank, short_answer, short_essay';
 
+      const previousQuestionNotes = priorQuestionTexts.length > 0
+        ? priorQuestionTexts.map((question, index) => `${index + 1}. ${question}`).join('\n')
+        : '(No questions generated yet.)';
+
       let prompt = `You are a university academic examiner. Generate EXACTLY ${batchSize} rigorous assessment questions based STRICTLY on the substantive educational concepts in the provided course excerpts.
 
 CRITICAL SUBJECT RELEVANCE & GROUNDING RULES:
@@ -382,6 +446,9 @@ CRITICAL SUBJECT RELEVANCE & GROUNDING RULES:
 Target Difficulty: ${difficulty}.
 Allowed Question Types: ${typesList}.
 Style focus: ${questionStyle || 'balanced exam mix'}.
+
+PREVIOUSLY GENERATED QUESTIONS — DO NOT REPEAT OR PARAPHRASE THESE:
+${previousQuestionNotes}
 
 ${styleNotes ? `${styleNotes}\n\n` : ''}
 COURSE EXCERPTS:
@@ -420,7 +487,10 @@ OUTPUT FORMAT: Return ONLY a valid JSON array of ${batchSize} objects:
           const validatedQuestions: QuizQuestion[] = [];
           for (let i = 0; i < parsed.length; i++) {
             const val = validateAndNormalizeQuestion(parsed[i], chunkBatch, batchIndex, i);
-            if (val) {
+            if (val && !isDuplicateQuestion(
+              val.question,
+              [...priorQuestionTexts, ...validatedQuestions.map((question) => question.question)]
+            )) {
               val.mode = mode;
               val.sourceExamTitle = examSourceTitle || undefined;
               validatedQuestions.push(val);
@@ -429,13 +499,13 @@ OUTPUT FORMAT: Return ONLY a valid JSON array of ${batchSize} objects:
 
           // If at least one question passed strict validation
           if (validatedQuestions.length > 0) {
-            const totalGeneratedSoFar = batchIndex * 5 + validatedQuestions.length;
-            const hasMore = totalGeneratedSoFar < questionCount;
+            const totalGeneratedSoFar = alreadyGeneratedCount + validatedQuestions.length;
+            const hasMore = totalGeneratedSoFar < targetQuestionCount;
 
             return {
               questions: validatedQuestions,
               totalGenerated: validatedQuestions.length,
-              requestedCount: questionCount,
+              requestedCount: targetQuestionCount,
               hasMore,
               batchIndex,
               mode,
@@ -456,16 +526,17 @@ OUTPUT FORMAT: Return ONLY a valid JSON array of ${batchSize} objects:
     difficulty,
     questionTypes,
     mode,
-    examSourceTitle
+    examSourceTitle,
+    priorQuestionTexts
   );
 
-  const totalGeneratedSoFar = batchIndex * 5 + fallbackList.length;
-  const hasMore = totalGeneratedSoFar < questionCount;
+  const totalGeneratedSoFar = alreadyGeneratedCount + fallbackList.length;
+  const hasMore = totalGeneratedSoFar < targetQuestionCount;
 
   return {
     questions: fallbackList,
     totalGenerated: fallbackList.length,
-    requestedCount: questionCount,
+    requestedCount: targetQuestionCount,
     hasMore,
     batchIndex,
     mode,
@@ -483,7 +554,8 @@ export function generateDomainGroundedQuestions(
   difficulty: 'easy' | 'medium' | 'hard',
   allowedTypes?: QuestionType[],
   mode: 'past_paper' | 'notes_based' = 'notes_based',
-  sourceExamTitle?: string
+  sourceExamTitle?: string,
+  previousQuestions: string[] = []
 ): QuizQuestion[] {
   const result: QuizQuestion[] = [];
   const typePool: QuestionType[] =
@@ -566,9 +638,11 @@ export function generateDomainGroundedQuestions(
     );
   }
 
-  for (let i = 0; i < count; i++) {
-    const fact = facts[i % facts.length];
-    const type = typePool[i % typePool.length];
+  const maxCombinations = facts.length * typePool.length;
+  for (let i = 0; i < maxCombinations && result.length < count; i++) {
+    const sequenceIndex = (previousQuestions.length + i) % Math.max(1, maxCombinations);
+    const fact = facts[sequenceIndex % facts.length];
+    const type = typePool[Math.floor(sequenceIndex / facts.length) % typePool.length];
     const chunk = fact.chunk;
 
     let q: QuizQuestion;
@@ -603,7 +677,7 @@ export function generateDomainGroundedQuestions(
       // Assemble 4 options and shuffle deterministically
       const rawChoices = [correctText, distractors[0], distractors[1], distractors[2]];
       // Deterministic shift so correct answer position rotates across A, B, C, D
-      const correctSlot = i % 4;
+      const correctSlot = sequenceIndex % 4;
       const orderedChoices = [...rawChoices.slice(1)];
       orderedChoices.splice(correctSlot, 0, correctText);
 
@@ -645,7 +719,7 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else if (type === 'true_false') {
-      const isTrue = i % 2 === 0;
+      const isTrue = sequenceIndex % 2 === 0;
       let statement = fact.fullSentence;
 
       if (!isTrue) {
@@ -784,7 +858,12 @@ export function generateDomainGroundedQuestions(
       };
     }
 
-    result.push(q);
+    if (!isDuplicateQuestion(q.question, [
+      ...previousQuestions,
+      ...result.map((existingQuestion) => existingQuestion.question),
+    ])) {
+      result.push(q);
+    }
   }
 
   return result;

@@ -2,7 +2,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { db, initDb } from '../server/db.js';
 import { extractContent, processAndIndexMaterial, sanitizeEducationalContent, isSubstantiveEducationalContent } from '../server/materialProcessing.js';
-import { generateQuizQuestions, isCrossDomainContaminated, sanitizeQuestionText } from '../server/assessmentEngine.js';
+import {
+  calculateQuestionBatchSize,
+  generateDomainGroundedQuestions,
+  generateQuizQuestions,
+  isCrossDomainContaminated,
+  isDuplicateQuestion,
+  sanitizeQuestionText,
+} from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
 
 // Initialize in-memory database
@@ -45,6 +52,65 @@ SlideMaster Template v2.1
 Downloaded on 2024-09-01 by student_448`;
 
 describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite', () => {
+
+  it('Batch planner uses the total requested count across sequential batches', () => {
+    assert.strictEqual(calculateQuestionBatchSize(10, 0), 5);
+    assert.strictEqual(calculateQuestionBatchSize(10, 5), 5);
+    assert.strictEqual(calculateQuestionBatchSize(10, 8), 2);
+    assert.strictEqual(calculateQuestionBatchSize(10, 10), 0);
+  });
+
+  it('Question deduplication catches punctuation changes but preserves different concepts', () => {
+    assert.strictEqual(
+      isDuplicateQuestion(
+        'Which of the following accurately describes structuralism?',
+        ['Which of the following accurately describes structuralism']
+      ),
+      true
+    );
+    assert.strictEqual(
+      isDuplicateQuestion(
+        'Structuralism aimed to analyze conscious mental experience through systematic self-observation.',
+        ['Structuralism aimed to analyze conscious mental experience through systematic self-observation!']
+      ),
+      true
+    );
+    assert.strictEqual(isDuplicateQuestion('What is functionalism?', ['What is structuralism?']), false);
+  });
+
+  it('Fallback generator avoids questions already delivered in an earlier batch', () => {
+    const sourceChunk = {
+      chunkId: 'chk_dedup_test',
+      documentId: 'doc_dedup_test',
+      filename: 'psychology_lecture.txt',
+      courseId: 'course_dedup_test',
+      folderId: null,
+      ownerId: 'usr_test',
+      pageOrSlide: 1,
+      chunkIndex: 0,
+      text: sanitizeEducationalContent(PSYCHOLOGY_TEXT),
+      sourceExcerpt: PSYCHOLOGY_TEXT.slice(0, 220),
+      tokenEstimate: 50,
+    };
+    const firstBatch = generateDomainGroundedQuestions([sourceChunk], 5, 'medium', undefined, 'notes_based');
+    const secondBatch = generateDomainGroundedQuestions(
+      [sourceChunk],
+      5,
+      'medium',
+      undefined,
+      'notes_based',
+      undefined,
+      firstBatch.map((question) => question.question)
+    );
+    assert.ok(firstBatch.length > 0, 'First batch should contain questions');
+    for (const question of secondBatch) {
+      assert.strictEqual(
+        isDuplicateQuestion(question.question, firstBatch.map((item) => item.question)),
+        false,
+        'Continuation must not repeat a previously delivered question'
+      );
+    }
+  });
 
   it('Metadata Sanitizer: Strips copyright, timestamps, file paths, and templates', () => {
     const sanitized = sanitizeEducationalContent(PSYCHOLOGY_TEXT);

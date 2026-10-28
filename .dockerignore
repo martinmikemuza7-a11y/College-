@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+coverage
+*.log
+
+# Runtime JSON data is generated on startup; never bake local user data into an image.
+data/db.json
