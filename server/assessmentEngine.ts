@@ -431,7 +431,7 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
           : 'multiple_choice, true_false, fill_in_blank, short_answer, short_essay';
 
       const previousQuestionNotes = priorQuestionTexts.length > 0
-        ? priorQuestionTexts.map((question, index) => `${index + 1}. ${question}`).join('\\n')
+        ? priorQuestionTexts.map((question, index) => `${index + 1}. ${question}`).join('\n')
         : '(No questions generated yet.)';
 
       let prompt = `You are a university academic examiner. Generate EXACTLY ${batchSize} rigorous assessment questions based STRICTLY on the substantive educational concepts in the provided course excerpts.
