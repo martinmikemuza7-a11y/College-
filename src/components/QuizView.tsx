@@ -53,6 +53,46 @@ interface QuizViewProps {
   onNavigateToPastPapers?: () => void;
 }
 
+const QUESTION_COMPARISON_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'based', 'by', 'can',
+  'could', 'describe', 'describes', 'did', 'do', 'does', 'explain', 'for', 'from',
+  'how', 'in', 'into', 'is', 'it', 'its', 'of', 'on', 'or', 'the', 'their', 'this',
+  'those', 'to', 'was', 'were', 'what', 'when', 'where', 'which', 'who', 'why',
+  'with', 'would', 'following', 'accurately', 'according', 'document', 'notes',
+]);
+
+function normalizeQuestionForComparison(question: string): string {
+  return String(question || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isRepeatedQuestion(question: string, existingQuestions: string[]): boolean {
+  const normalized = normalizeQuestionForComparison(question);
+  if (!normalized) return true;
+
+  const tokens = (value: string) =>
+    new Set(value.split(' ').filter((token) => token.length > 2 && !QUESTION_COMPARISON_STOP_WORDS.has(token)));
+  const candidateTokens = tokens(normalized);
+
+  return existingQuestions.some((existing) => {
+    const other = normalizeQuestionForComparison(existing);
+    if (!other) return false;
+    if (normalized === other) return true;
+
+    const otherTokens = tokens(other);
+    if (Math.min(candidateTokens.size, otherTokens.size) < 5) return false;
+
+    const shared = [...candidateTokens].filter((token) => otherTokens.has(token)).length;
+    const union = candidateTokens.size + otherTokens.size - shared;
+    return shared / union >= 0.82 || shared / Math.min(candidateTokens.size, otherTokens.size) >= 0.9;
+  });
+}
+
 export const QuizView: React.FC<QuizViewProps> = ({
   activeCourse,
   courses = [],
@@ -100,7 +140,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [savedRevisions, setSavedRevisions] = useState<any[]>([]);
 
   // Assessment Configuration
-  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [questionCount, setQuestionCount] = useState(5);
   const [topicFocus, setTopicFocus] = useState('');
   const [selectedQuestionType, setSelectedQuestionType] = useState<'all' | QuestionType>('all');
@@ -283,11 +322,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
     let accumulated: QuizQuestion[] = [];
     let currentBatchIndex = 0;
     let moreAvailable = true;
+    let consecutiveNoProgressBatches = 0;
 
     try {
-      while (accumulated.length < targetCount && moreAvailable) {
-        const remainingToFetch = targetCount - accumulated.length;
-        const countForThisBatch = Math.min(5, remainingToFetch);
+      while (accumulated.length < targetCount && moreAvailable && consecutiveNoProgressBatches < 2) {
 
         setGenerationProgress(
           accumulated.length > 0
@@ -309,9 +347,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 : availablePastPapers.map((p) => p.id)
               : undefined,
           crossCourseIds: enableCrossCourse && selectedCrossCourseIds.length > 0 ? selectedCrossCourseIds : undefined,
-          questionCount: countForThisBatch,
+          questionCount: targetCount,
+          alreadyGeneratedCount: accumulated.length,
+          previousQuestions: accumulated.map((question) => question.question),
           batchIndex: currentBatchIndex,
-          difficulty,
           questionTypes: typesToRequest,
           questionStyle: questionStyle === 'all' ? undefined : questionStyle,
           topic: topicFocus.trim() || undefined,
@@ -323,18 +362,33 @@ export const QuizView: React.FC<QuizViewProps> = ({
           break;
         }
 
-        accumulated = [...accumulated, ...res.questions];
+        const newlyUniqueQuestions: QuizQuestion[] = [];
+        const existingQuestionTexts = accumulated.map((question) => question.question);
+        for (const candidate of res.questions) {
+          if (!isRepeatedQuestion(candidate.question, [...existingQuestionTexts, ...newlyUniqueQuestions.map((q) => q.question)])) {
+            newlyUniqueQuestions.push(candidate);
+          }
+        }
+
+        const previousCount = accumulated.length;
+        accumulated = [...accumulated, ...newlyUniqueQuestions].slice(0, targetCount);
+        consecutiveNoProgressBatches = accumulated.length === previousCount ? consecutiveNoProgressBatches + 1 : 0;
         setQuestions([...accumulated]);
         currentBatchIndex++;
-        moreAvailable = !!res.hasMore;
+        moreAvailable = !!res.hasMore && accumulated.length < targetCount && consecutiveNoProgressBatches < 2;
 
-        if (accumulated.length >= targetCount) break;
+        if (accumulated.length >= targetCount || consecutiveNoProgressBatches >= 2) break;
       }
 
       setHasMoreContinuation(moreAvailable);
       setBatchContinuationIndex(currentBatchIndex);
 
       if (accumulated.length > 0) {
+        if (accumulated.length < targetCount) {
+          setErrorMessage(
+            `Generated ${accumulated.length} unique questions out of ${targetCount} requested. The selected material may not contain enough distinct examinable concepts. Select more course documents or upload additional notes to broaden coverage.`
+          );
+        }
         if (isMockExam) {
           setMockTimeRemaining(mockExamDuration * 60);
           const totalMarks = accumulated.reduce((sum, q) => sum + (q.allocatedMarks || 2), 0);
@@ -374,9 +428,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
               : availablePastPapers.map((p) => p.id)
             : undefined,
         crossCourseIds: enableCrossCourse && selectedCrossCourseIds.length > 0 ? selectedCrossCourseIds : undefined,
-        questionCount: 5,
+        questionCount: questions.length + 5,
+        alreadyGeneratedCount: questions.length,
+        previousQuestions: questions.map((question) => question.question),
         batchIndex: batchContinuationIndex,
-        difficulty,
         questionTypes: typesToRequest,
         questionStyle: questionStyle === 'all' ? undefined : questionStyle,
         topic: topicFocus.trim() || undefined,
@@ -384,7 +439,15 @@ export const QuizView: React.FC<QuizViewProps> = ({
       });
 
       if (res.questions && res.questions.length > 0) {
-        setQuestions((prev) => [...prev, ...res.questions]);
+        setQuestions((prev) => {
+          const unique = [...prev];
+          for (const candidate of res.questions) {
+            if (!isRepeatedQuestion(candidate.question, unique.map((question) => question.question))) {
+              unique.push(candidate);
+            }
+          }
+          return unique;
+        });
         setBatchContinuationIndex((prev) => prev + 1);
         setHasMoreContinuation(!!res.hasMore);
       } else {
@@ -831,8 +894,8 @@ export const QuizView: React.FC<QuizViewProps> = ({
           </div>
         </div>
 
-        {/* Step C: Assessment Controls (Types, Difficulty, Quantity) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs pt-2 border-t border-slate-100">
+        {/* Step C: Assessment Controls (Types and Quantity) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs pt-2 border-t border-slate-100">
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Question Type</label>
             <select
@@ -861,19 +924,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
               <option value="explanations">Mechanisms & Explanations</option>
               <option value="comparisons">Comparative Analysis</option>
               <option value="applied">Applied Problem Solving</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Difficulty</label>
-            <select
-              value={difficulty}
-              onChange={(e: any) => setDifficulty(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer"
-            >
-              <option value="easy">Easy (Foundations & Recall)</option>
-              <option value="medium">Medium (Analytical Application)</option>
-              <option value="hard">Hard (Synthesis & Proofs)</option>
             </select>
           </div>
 
@@ -1122,9 +1172,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-400 font-medium capitalize">
-                          Difficulty: {q.difficulty}
-                        </span>
                         {isAnswered && (
                           <span className="w-2 h-2 rounded-full bg-emerald-500" title="Answer entered" />
                         )}
@@ -1390,7 +1437,6 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   )}
                 </div>
 
-                <span className="font-medium text-slate-400 capitalize">Difficulty: {currentQuestion.difficulty}</span>
               </div>
 
               <h3 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">

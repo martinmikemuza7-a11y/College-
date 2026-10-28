@@ -382,7 +382,8 @@ export const api = {
     pastPaperIds?: string[];
     crossCourseIds?: string[];
     questionCount?: number;
-    difficulty?: 'easy' | 'medium' | 'hard';
+    alreadyGeneratedCount?: number;
+    previousQuestions?: string[];
     questionTypes?: string[];
     questionStyle?: string;
     topic?: string;
