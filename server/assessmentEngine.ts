@@ -296,7 +296,7 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     availablePastPapers = availablePastPapers.filter((p) => pastPaperIds.includes(p.id));
   }
 
-  if (mode === 'past_paper') {
+  if (mode !== 'notes_based') {
     if (availablePastPapers.length === 0) {
       throw new Error(
         'No past examination papers found for this course. Please upload past exam papers in the "Past Papers" tab first, or switch to "Notes-Based Practice".'
@@ -403,7 +403,8 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
         .filter((item) => typeof item.prompt === 'string' && item.prompt.trim().length > 0)
         .map((item) => ({ paper, item }))
     );
-    const batchItems = extracted.slice(alreadyGeneratedCount, alreadyGeneratedCount + batchSize);
+    const actualOffset = batchIndex * 5;
+    const batchItems = extracted.slice(actualOffset, actualOffset + batchSize);
     if (batchItems.length === 0) {
       return { questions: [], totalGenerated: 0, requestedCount: targetQuestionCount, hasMore: false, batchIndex, mode };
     }
@@ -454,7 +455,7 @@ ${answerContext}`;
         id: `past_${paper.id}_${String(item.questionNumber || index + 1).replace(/[^a-z0-9_-]/gi, '_')}`,
         type: item.type, difficulty: 'medium', allocatedMarks: item.allocatedMarks || 2,
         question: item.prompt.trim(), topic: item.section || 'Past Paper',
-        questionStyle: 'Original Past Paper Question', options: item.options,
+        questionStyle: 'Original Past Paper Question', options: item.options?.map((option, optionIndex) => `${String.fromCharCode(65 + optionIndex)}. ${option}`),
         correctAnswer: answerText,
         explanation: String(answer.explanation || (answerText === insufficient ? insufficient : 'Model answer prepared from the uploaded course notes.')),
         markingPoints: Array.isArray(answer.markingPoints) ? answer.markingPoints.map(String) : undefined,
@@ -469,7 +470,7 @@ ${answerContext}`;
 
     return {
       questions, totalGenerated: questions.length, requestedCount: targetQuestionCount,
-      hasMore: alreadyGeneratedCount + questions.length < extracted.length && alreadyGeneratedCount + questions.length < targetQuestionCount,
+      hasMore: actualOffset + questions.length < extracted.length && alreadyGeneratedCount + questions.length < targetQuestionCount,
       batchIndex, mode,
     };
   }
