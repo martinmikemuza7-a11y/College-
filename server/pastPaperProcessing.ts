@@ -62,15 +62,15 @@ export function parsePastPaperText(
     }
 
     // Match question headers e.g. "Question 1", "1.", "1(a)", "Q1:"
-    const qMatch = line.match(/^(?:question\s+(\d+[a-z]?)|(\d+[a-z]?)\.|\(?([0-9]+[a-z]?)\)|Q(\d+):?)[:.)]?\s*(.*)/i);
+    const qMatch = line.match(/^(?:question\s+(\d+[a-z]?(?:\([a-z]\))?)|(\d+[a-z]?(?:\([a-z]\))?)\.|(\d+\([a-z]\))|\(?([0-9]+[a-z]?)\)|Q(\d+):?)[:.)]?\s*(.*)/i);
 
     if (qMatch) {
       if (currentQ && currentQ.prompt) {
         questions.push(finalizeQuestion(currentQ));
       }
 
-      const qNum = qMatch[1] || qMatch[2] || qMatch[3] || qMatch[4] || `${questions.length + 1}`;
-      const rest = qMatch[5] || '';
+      const qNum = qMatch[1] || qMatch[2] || qMatch[3] || qMatch[4] || qMatch[5] || `${questions.length + 1}`;
+      const rest = qMatch[6] || '';
 
       currentQ = {
         questionNumber: qNum,
@@ -100,8 +100,10 @@ export function parsePastPaperText(
 function finalizeQuestion(q: Partial<PastPaperQuestionStructure>): PastPaperQuestionStructure {
   let type: QuestionType = 'short_answer';
   const prompt = (q.prompt || '').trim();
+  const inlineMarks = prompt.match(/\[(\d+)\s*(?:marks?|pts?)\]|\((\d+)\s*(?:marks?|pts?)\)/i);
+  const allocatedMarks = q.allocatedMarks || (inlineMarks ? parseInt(inlineMarks[1] || inlineMarks[2], 10) : undefined);
 
-  if (/explain|discuss|describe|contrast|compare|evaluate|analyze/i.test(prompt) || (q.allocatedMarks && q.allocatedMarks >= 4)) {
+  if (/explain|discuss|describe|contrast|compare|evaluate|analyze/i.test(prompt) || (allocatedMarks && allocatedMarks >= 4)) {
     type = 'short_essay';
   } else if (/which of the following|options:|a\)|b\)/i.test(prompt)) {
     type = 'multiple_choice';
@@ -139,7 +141,7 @@ function finalizeQuestion(q: Partial<PastPaperQuestionStructure>): PastPaperQues
     type,
     prompt: cleanPrompt,
     options,
-    allocatedMarks: q.allocatedMarks || (type === 'short_essay' ? 5 : 2),
+    allocatedMarks: allocatedMarks || (type === 'short_essay' ? 5 : 2),
     markingGuide: q.markingGuide || 'Award full marks for clear conceptual mastery.',
     sourcePage: q.sourcePage || 1,
   };
