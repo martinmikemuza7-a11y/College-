@@ -1214,7 +1214,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
               )}
               <button
                 type="button"
-                onClick={() => setShowAnswerKey(!showAnswerKey)
+                onClick={() => setShowAnswerKey(!showAnswerKey)}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ${
                   showAnswerKey
                     ? 'bg-slate-800 text-white hover:bg-slate-900'
