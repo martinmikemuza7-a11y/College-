@@ -8,7 +8,7 @@ export interface GenerateQuizOptions {
   courseId: string;
   folderId?: string | null | 'all';
   ownerId?: string;
-  mode?: 'past_paper' | 'notes_based';
+  mode?: 'actual_past_paper' | 'past_paper' | 'notes_based';
   selectedDocumentIds?: string[];
   pastPaperIds?: string[];
   crossCourseIds?: string[];
@@ -29,7 +29,7 @@ export interface GeneratedQuizBatch {
   requestedCount: number;
   hasMore: boolean;
   batchIndex: number;
-  mode?: 'past_paper' | 'notes_based';
+  mode?: 'actual_past_paper' | 'past_paper' | 'notes_based';
 }
 
 /**
@@ -396,7 +396,85 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     ? [...chunks.slice(offset), ...chunks.slice(0, offset)]
     : [];
 
-  // 5. Build Past Paper Style Exemplars
+  // 5. Actual Past Paper mode: use extracted exam prompts verbatim, and generate only the answers from course notes.
+  if (mode === 'actual_past_paper') {
+    const extracted = availablePastPapers.flatMap((paper) =>
+      (paper.extractedQuestions || [])
+        .filter((item) => typeof item.prompt === 'string' && item.prompt.trim().length > 0)
+        .map((item) => ({ paper, item }))
+    );
+    const batchItems = extracted.slice(alreadyGeneratedCount, alreadyGeneratedCount + batchSize);
+    if (batchItems.length === 0) {
+      return { questions: [], totalGenerated: 0, requestedCount: targetQuestionCount, hasMore: false, batchIndex, mode };
+    }
+
+    const answerContext = chunks.slice(0, 18).map((chunk, index) =>
+      `[Course source ${index + 1}: ${chunk.filename}, page/slide ${chunk.pageOrSlide}]\n${chunk.text}`
+    ).join('\n\n---\n\n');
+    const answerTasks = batchItems.map(({ paper, item }, index) => ({
+      index, question: item.prompt, type: item.type, marks: item.allocatedMarks || 2,
+      options: item.options || [], paperTitle: paper.title || paper.filename,
+    }));
+    const answerPrompt = `You are answering actual questions extracted from uploaded university past papers. Do not rewrite, paraphrase, shorten, or replace the questions. Produce answers only.
+
+Use ONLY the course-note passages below for factual claims. For each question, return a concise model answer appropriate to its marks, a brief explanation, marking points, and acceptable answer variants. If the passages do not support an answer, use exactly: "The uploaded course documents do not contain sufficient evidence to answer this question." Do not invent missing facts. For multiple-choice questions, choose from the provided original options if present and return the option label and text as the answer. Return valid JSON only, as an array of objects with index, answer, explanation, markingPoints, and acceptableAnswers.
+
+ACTUAL QUESTIONS (keep these prompts unchanged in the app):
+${JSON.stringify(answerTasks, null, 2)}
+
+COURSE NOTES:
+${answerContext}`;
+
+    let answerRows: any[] = [];
+    const ai = getGenAI();
+    if (ai && answerContext.length > 0) {
+      try {
+        const responseText = await generateGroundedContent({ prompt: answerPrompt, responseMimeType: 'application/json', temperature: 0.1 });
+        if (responseText) {
+          const parsed = JSON.parse(responseText.trim());
+          if (Array.isArray(parsed)) answerRows = parsed;
+        }
+      } catch (err) {
+        console.warn('[Assessment] Actual past-paper answer generation failed:', err);
+      }
+    }
+
+    const insufficient = 'The uploaded course documents do not contain sufficient evidence to answer this question.';
+    const questions: QuizQuestion[] = batchItems.map(({ paper, item }, index) => {
+      const answer = answerRows.find((row) => Number(row.index) === index) || {};
+      const answerText = String(answer.answer || insufficient).trim();
+      const promptTokens = item.prompt.toLowerCase().split(/\W+/).filter((token) => token.length > 4);
+      const primaryChunk = chunks.find((chunk) => promptTokens.some((token) => chunk.text.toLowerCase().includes(token))) || chunks[0];
+      const citations = primaryChunk ? [{
+        chunkId: primaryChunk.chunkId, documentId: primaryChunk.documentId, filename: primaryChunk.filename,
+        courseId: primaryChunk.courseId, folderId: primaryChunk.folderId, pageOrSlide: primaryChunk.pageOrSlide,
+        sourceExcerpt: primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220), relevanceScore: 0.8,
+      }] : [];
+      return {
+        id: `past_${paper.id}_${String(item.questionNumber || index + 1).replace(/[^a-z0-9_-]/gi, '_')}`,
+        type: item.type, difficulty: 'medium', allocatedMarks: item.allocatedMarks || 2,
+        question: item.prompt.trim(), topic: item.section || 'Past Paper',
+        questionStyle: 'Original Past Paper Question', options: item.options,
+        correctAnswer: answerText,
+        explanation: String(answer.explanation || (answerText === insufficient ? insufficient : 'Model answer prepared from the uploaded course notes.')),
+        markingPoints: Array.isArray(answer.markingPoints) ? answer.markingPoints.map(String) : undefined,
+        sampleAnswer: answerText,
+        acceptableAnswers: Array.isArray(answer.acceptableAnswers) ? answer.acceptableAnswers.map(String) : [answerText],
+        citations, isVerifiedFromNotes: answerText !== insufficient,
+        verificationNote: answerText === insufficient ? insufficient : `Answer grounded in course notes; original prompt extracted from ${paper.title || paper.filename}.`,
+        mode: 'actual_past_paper', sourceExamTitle: paper.title || paper.filename,
+        sourceQuestionNumber: item.questionNumber, sourceSection: item.section,
+      };
+    });
+
+    return {
+      questions, totalGenerated: questions.length, requestedCount: targetQuestionCount,
+      hasMore: alreadyGeneratedCount + questions.length < extracted.length && alreadyGeneratedCount + questions.length < targetQuestionCount,
+      batchIndex, mode,
+    };
+  }
+
+  // 6. Build Past Paper Style Exemplars
   let styleNotes = '';
   let examSourceTitle = '';
   if (mode === 'past_paper' && availablePastPapers.length > 0) {
