@@ -115,10 +115,10 @@ function finalizeQuestion(q: Partial<PastPaperQuestionStructure>): PastPaperQues
   // Keep the stem and option text intact, but render choices as separate selectable options.
   let cleanPrompt = prompt;
   let options: string[] | undefined;
-  const optionStart = prompt.search(/(?:^|\\s)\\(?A\\)?[.)]\\s+/i);
+  const optionStart = prompt.search(/(?:^|\s)\(?A\)?[.)]\s+/i);
   if (optionStart >= 0) {
     const optionTail = prompt.slice(optionStart).trim();
-    const optionMatches = [...optionTail.matchAll(/(?:^|\\s)\\(?([A-D])\\)?[.)]\\s*/gi)];
+    const optionMatches = [...optionTail.matchAll(/(?:^|\s)\(?([A-D])\)?[.)]\s*/gi)];
     if (optionMatches.length >= 2) {
       const parsedOptions = optionMatches.map((match, index) => {
         const start = (match.index || 0) + match[0].length;
