@@ -232,6 +232,25 @@ export const api = {
     return res.json();
   },
 
+  async getMaterialQuestions(materialId: string): Promise<{ materialId: string; questions: QuizQuestion[] }> {
+    const res = await fetch(`/api/materials/${materialId}/questions`);
+    if (!res.ok) throw new Error('Failed to load saved question bank');
+    return res.json();
+  },
+
+  async saveMaterialQuestions(materialId: string, questions: QuizQuestion[]): Promise<{ savedCount: number; totalSaved: number; questions: QuizQuestion[] }> {
+    const res = await fetch(`/api/materials/${materialId}/questions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || 'Failed to save questions');
+    }
+    return res.json();
+  },
+
   async updateMaterial(materialId: string, updates: Partial<Material>): Promise<{ material: Material }> {
     const res = await fetch(`/api/materials/${materialId}`, {
       method: 'PUT',
@@ -377,7 +396,7 @@ export const api = {
   async generateQuiz(options: {
     courseId: string;
     folderId?: string | null | 'all';
-    mode?: 'past_paper' | 'notes_based';
+    mode?: 'actual_past_paper' | 'past_paper' | 'notes_based';
     selectedDocumentIds?: string[];
     pastPaperIds?: string[];
     crossCourseIds?: string[];
@@ -389,7 +408,7 @@ export const api = {
     topic?: string;
     isMockExam?: boolean;
     batchIndex?: number;
-  }): Promise<{ questions: QuizQuestion[]; hasMore?: boolean; batchIndex?: number; totalGenerated?: number; mode?: 'past_paper' | 'notes_based' }> {
+  }): Promise<{ questions: QuizQuestion[]; hasMore?: boolean; batchIndex?: number; totalGenerated?: number; mode?: 'actual_past_paper' | 'past_paper' | 'notes_based' }> {
     const res = await fetch('/api/quiz/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
