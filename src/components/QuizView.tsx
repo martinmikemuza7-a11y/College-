@@ -752,7 +752,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   <FileCheck className={`w-4 h-4 ${generationMode === 'past_paper' ? 'text-indigo-600' : 'text-slate-400'}`} />
                   <span>Past Paper Practice</span>
                 </div>
-                {generationMode !== 'notes_based' && (
+                {generationMode === 'past_paper' && (
                   <span className="w-2 h-2 rounded-full bg-indigo-600" />
                 )}
               </div>
