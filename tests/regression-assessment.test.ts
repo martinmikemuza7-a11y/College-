@@ -137,6 +137,15 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     ]);
     assert.strictEqual(extracted.questions[0].type, 'multiple_choice');
     assert.strictEqual(extracted.questions[1].prompt, 'Explain the purpose of a function in C++ (5 marks)');
+    assert.strictEqual(extracted.questions[1].allocatedMarks, 5);
+
+    const subquestions = parsePastPaperText(
+      '1. Functions\\n1(a) Define a function.\\n1(b) State one benefit of using functions.\\n2. Explain function overloading.',
+      'subquestions.txt'
+    );
+    assert.deepStrictEqual(subquestions.questions.map((question) => question.questionNumber), ['1', '1(a)', '1(b)', '2']);
+    assert.strictEqual(subquestions.questions[1].prompt, 'Define a function.');
+    assert.strictEqual(subquestions.questions[2].prompt, 'State one benefit of using functions.');
 
     const unnumbered = parsePastPaperText(
       'This is an ordinary paragraph about functions and variables, not an actual exam question.',
