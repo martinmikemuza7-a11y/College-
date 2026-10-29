@@ -122,7 +122,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
         'C. Scope resolution operator',
         'D. Conditional operator',
         'Question 2: Explain the purpose of a function in C++ (5 marks)',
-      ].join('\\n'),
+      ].join('\n'),
       'C++_2025_exam.txt'
     );
 
