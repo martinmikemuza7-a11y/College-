@@ -62,7 +62,7 @@ export function parsePastPaperText(
     }
 
     // Match question headers e.g. "Question 1", "1.", "1(a)", "Q1:"
-    const qMatch = line.match(/^(?:question\s+(\d+[a-z]?)|(\d+[a-z]?)\.|\(?([0-9]+[a-z]?)\)|Q(\d+):?)\s*(.*)/i);
+    const qMatch = line.match(/^(?:question\s+(\d+[a-z]?)|(\d+[a-z]?)\.|\(?([0-9]+[a-z]?)\)|Q(\d+):?)[:.)]?\s*(.*)/i);
 
     if (qMatch) {
       if (currentQ && currentQ.prompt) {
