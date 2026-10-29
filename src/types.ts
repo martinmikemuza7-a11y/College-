@@ -209,8 +209,10 @@ export interface QuizQuestion {
   citations: Citation[];
   isVerifiedFromNotes?: boolean;
   verificationNote?: string;
-  mode?: 'past_paper' | 'notes_based';
+  mode?: 'actual_past_paper' | 'past_paper' | 'notes_based';
   sourceExamTitle?: string;
+  sourceQuestionNumber?: string;
+  sourceSection?: string;
 }
 
 export interface SavedQuizMistake {
