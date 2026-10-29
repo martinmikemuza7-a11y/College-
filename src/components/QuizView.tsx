@@ -109,7 +109,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
   // Generation Mode: 'past_paper' uses past papers for question structure & notes for factual answers
   // 'notes_based' generates questions directly from course notes
-  const [generationMode, setGenerationMode] = useState<'past_paper' | 'notes_based'>(
+  const [generationMode, setGenerationMode] = useState<'actual_past_paper' | 'past_paper' | 'notes_based'>(
     initialPastPaperId ? 'past_paper' : 'past_paper'
   );
 
@@ -167,6 +167,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [progress, setProgress] = useState<UserProgress | null>(null);
   const [coverageData, setCoverageData] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [questionBankMessage, setQuestionBankMessage] = useState<string | null>(null);
   const [showCoverageModal, setShowCoverageModal] = useState(false);
   const [showExamFinishedModal, setShowExamFinishedModal] = useState(false);
 
@@ -279,7 +280,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
     if (!activeCourse || isGenerating) return;
 
     // Guardrail: Check for required materials based on mode
-    if (generationMode === 'past_paper') {
+    if (generationMode !== 'notes_based') {
       if (availablePastPapers.length === 0) {
         setErrorMessage(
           `No past examination papers are uploaded for ${activeCourse.code}. Please upload past exam papers in the "Past Papers" section, or switch to "Notes-Based Practice" mode below.`
@@ -303,7 +304,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
     setIsGenerating(true);
     setGenerationProgress(
-      generationMode === 'past_paper'
+      generationMode === 'actual_past_paper'
+        ? 'Loading original past-paper questions and preparing note-grounded answers…'
+        : generationMode === 'past_paper'
         ? 'Calibrating question styles from past papers and grounding answers in course notes…'
         : 'Synthesizing practice questions directly from course lecture notes…'
     );
@@ -329,7 +332,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
         setGenerationProgress(
           accumulated.length > 0
-            ? `Generating grounded questions in batches (${accumulated.length} of ${targetCount} ready)…`
+            ? `Preparing questions in batches (${accumulated.length} of ${targetCount} ready)…`
+            : generationMode === 'actual_past_paper'
+            ? 'Loading original exam questions and preparing answers…'
             : generationMode === 'past_paper'
             ? 'Styling questions from past exams and retrieving verified answers from notes…'
             : 'Synthesizing verified questions from course notes and slides…'
@@ -341,7 +346,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
           mode: generationMode,
           selectedDocumentIds: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
           pastPaperIds:
-            generationMode === 'past_paper'
+            generationMode !== 'notes_based'
               ? selectedPastPaperIds.length > 0
                 ? selectedPastPaperIds
                 : availablePastPapers.map((p) => p.id)
@@ -458,6 +463,64 @@ export const QuizView: React.FC<QuizViewProps> = ({
     } finally {
       setIsGenerating(false);
       setGenerationProgress(null);
+    }
+  };
+
+  const handleSaveToQuestionBank = async () => {
+    if (questions.length === 0 || materialsList.length === 0) return;
+    try {
+      const groups = new Map<string, QuizQuestion[]>();
+      for (const question of questions) {
+        const citedDocumentId = question.citations?.[0]?.documentId;
+        const target = materialsList.find((material) => material.id === citedDocumentId)
+          || materialsList.find((material) => selectedDocumentIds.includes(material.id))
+          || materialsList[0];
+        if (!target) continue;
+        groups.set(target.id, [...(groups.get(target.id) || []), question]);
+      }
+      let savedTotal = 0;
+      for (const [materialId, group] of groups.entries()) {
+        const result = await api.saveMaterialQuestions(materialId, group);
+        savedTotal += result.savedCount;
+      }
+      await loadMaterials();
+      setQuestionBankMessage(savedTotal > 0
+        ? `Saved ${savedTotal} new question(s) and answer(s) to the document question bank.`
+        : 'These questions are already saved in the question bank.');
+    } catch (err) {
+      setQuestionBankMessage(err instanceof Error ? err.message : 'Could not save the question bank.');
+    }
+  };
+
+  const handleLoadSavedQuestionBank = async () => {
+    const sourceMaterials = materialsList.filter((material) =>
+      selectedDocumentIds.length === 0 || selectedDocumentIds.includes(material.id)
+    );
+    if (sourceMaterials.length === 0) {
+      setQuestionBankMessage('Select at least one course document to load its saved question bank.');
+      return;
+    }
+    try {
+      const responses = await Promise.all(sourceMaterials.map((material) => api.getMaterialQuestions(material.id)));
+      const combined: QuizQuestion[] = [];
+      for (const response of responses) {
+        for (const question of response.questions || []) {
+          if (!isRepeatedQuestion(question.question, combined.map((item) => item.question))) combined.push(question);
+        }
+      }
+      if (combined.length === 0) {
+        setQuestionBankMessage('No saved questions yet. Generate a Notes-Based Practice quiz, then choose “Save to Question Bank”.');
+        return;
+      }
+      setQuestions(combined);
+      setGenerationMode('notes_based');
+      setCurrentIndex(0);
+      setSheetAnswers({});
+      setShowAnswerKey(false);
+      resetQuestionInputStates();
+      setQuestionBankMessage(`Loaded ${combined.length} saved question(s) with answers.`);
+    } catch (err) {
+      setQuestionBankMessage(err instanceof Error ? err.message : 'Could not load the saved question bank.');
     }
   };
 
@@ -620,7 +683,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 max-w-2xl leading-relaxed">
-            Intelligent, dual-source exam engine. Past papers govern question styles and structure; verified course notes provide the factual answers and citations.
+            Three study modes: practise the exact questions extracted from past papers, create new exam-style questions, or build a reusable question-and-answer bank from course notes.
           </p>
         </div>
 
@@ -673,7 +736,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
           <label className="text-xs font-bold text-slate-900 uppercase tracking-wider block">
             Select Question-Generation Mode
           </label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {/* Mode 1: Past Paper Practice */}
             <button
               type="button"
@@ -698,6 +761,31 @@ export const QuizView: React.FC<QuizViewProps> = ({
               </p>
               <div className="mt-2 text-[11px] font-semibold text-indigo-700">
                 {availablePastPapers.length} past exam paper(s) available in this course
+              </div>
+            </button>
+
+            {/* Mode 2: Original Past Paper Questions */}
+            <button
+              type="button"
+              onClick={() => setGenerationMode('actual_past_paper')}
+              className={`p-4 rounded-xl border text-left transition cursor-pointer relative ${
+                generationMode === 'actual_past_paper'
+                  ? 'border-emerald-600 bg-emerald-50/80 shadow-2xs ring-1 ring-emerald-500'
+                  : 'border-slate-200 hover:border-slate-300 bg-white'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2 font-bold text-sm text-slate-900">
+                  <FileText className={`w-4 h-4 ${generationMode === 'actual_past_paper' ? 'text-emerald-600' : 'text-slate-400'}`} />
+                  <span>Actual Past Paper Questions</span>
+                </div>
+                {generationMode === 'actual_past_paper' && <span className="w-2 h-2 rounded-full bg-emerald-600" />}
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Asks the questions extracted from your uploaded past papers, preserving their wording and marks. Course notes are used to prepare answers.
+              </p>
+              <div className="mt-2 text-[11px] font-semibold text-emerald-700">
+                {availablePastPapers.reduce((total, paper) => total + (paper.extractedQuestions?.length || 0), 0)} extracted exam questions available
               </div>
             </button>
 
@@ -731,7 +819,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
         </div>
 
         {/* Missing Source Warning Banners */}
-        {generationMode === 'past_paper' && availablePastPapers.length === 0 && (
+        {generationMode !== 'notes_based' && availablePastPapers.length === 0 && (
           <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
@@ -775,7 +863,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
         <div className="pt-2 border-t border-slate-100 space-y-3">
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-              {generationMode === 'past_paper' ? 'Select Past Paper & Notes Sources' : 'Select Notes Source Scope'}
+              {generationMode !== 'notes_based' ? 'Select Past Paper & Notes Sources' : 'Select Notes Source Scope'}
             </span>
             <span className="text-[11px] text-slate-400">
               Only documents from {activeCourse.code} are included
@@ -784,7 +872,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             {/* Past Papers Selector (in past_paper mode) */}
-            {generationMode === 'past_paper' && (
+            {generationMode !== 'notes_based' && (
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-700 flex items-center gap-1.5">
@@ -958,6 +1046,14 @@ export const QuizView: React.FC<QuizViewProps> = ({
             />
 
             <button
+              type="button"
+              onClick={handleLoadSavedQuestionBank}
+              disabled={isGenerating || materialsList.length === 0}
+              className="w-full sm:w-auto px-4 py-2.5 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition cursor-pointer shrink-0"
+            >
+              Load Saved Q&amp;A
+            </button>
+            <button
               onClick={handleGenerateQuiz}
               disabled={isGenerating}
               className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow transition flex items-center justify-center gap-2 cursor-pointer shrink-0"
@@ -971,7 +1067,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 <>
                   <Play className="w-4 h-4" />
                   <span>
-                    {generationMode === 'past_paper'
+                    {generationMode === 'actual_past_paper'
+                      ? `Practise Original Past Paper Questions (up to ${questionCount})`
+                      : generationMode === 'past_paper'
                       ? `Generate Exam Practice (${questionCount} Questions)`
                       : `Generate Notes Quiz (${questionCount} Questions)`}
                   </span>
@@ -1022,6 +1120,13 @@ export const QuizView: React.FC<QuizViewProps> = ({
           )}
         </div>
 
+        {questionBankMessage && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start justify-between gap-3">
+            <span>{questionBankMessage}</span>
+            <button type="button" onClick={() => setQuestionBankMessage(null)} className="font-bold text-emerald-700">✕</button>
+          </div>
+        )}
+
         {/* Error / Feedback Message */}
         {errorMessage && (
           <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start justify-between gap-3 animate-in fade-in">
@@ -1056,11 +1161,13 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 {questions.length} Questions • {totalMarks} Marks
               </span>
               <span className={`px-2.5 py-1 rounded-full font-bold text-[11px] ${
-                generationMode === 'past_paper'
+                generationMode === 'actual_past_paper'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : generationMode === 'past_paper'
                   ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                   : 'bg-rose-50 text-rose-700 border border-rose-200'
               }`}>
-                {generationMode === 'past_paper' ? 'Past Paper Calibrated' : 'Notes-Based Practice'}
+                {generationMode === 'actual_past_paper' ? 'Original Past Paper' : generationMode === 'past_paper' ? 'Past Paper Calibrated' : 'Notes-Based Practice'}
               </span>
               <span className="text-slate-500 font-medium">
                 Answered {answeredCount} of {questions.length}
@@ -1095,6 +1202,16 @@ export const QuizView: React.FC<QuizViewProps> = ({
               </div>
 
               {/* Requirement 3: Separate "Show Answers" button that reveals the answer key afterward */}
+              {generationMode === 'notes_based' && (
+                <button
+                  type="button"
+                  onClick={handleSaveToQuestionBank}
+                  className="px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  Save to Question Bank
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setShowAnswerKey(!showAnswerKey)}
@@ -1154,7 +1271,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                     <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 text-xs">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-extrabold text-slate-900 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-                          Question {idx + 1}
+                          {q.mode === 'actual_past_paper' && q.sourceQuestionNumber ? `Past Paper Q${q.sourceQuestionNumber}` : `Question ${idx + 1}`}
                         </span>
                         <span className="font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-md capitalize">
                           {q.type.replace('_', ' ')}
@@ -1164,11 +1281,11 @@ export const QuizView: React.FC<QuizViewProps> = ({
                             {q.allocatedMarks} marks
                           </span>
                         )}
-                        {q.mode === 'past_paper' && (
-                          <span className="font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md text-[10px]">
-                            Past Paper Calibrated
-                          </span>
-                        )}
+                        {q.mode === 'actual_past_paper' ? (
+                          <span className="font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md text-[10px]">Original: {q.sourceExamTitle || 'Past paper'}{q.sourceSection ? ` • ${q.sourceSection}` : ''}</span>
+                        ) : q.mode === 'past_paper' ? (
+                          <span className="font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md text-[10px]">Past Paper Calibrated</span>
+                        ) : null}
                       </div>
 
                       <div className="flex items-center gap-2">

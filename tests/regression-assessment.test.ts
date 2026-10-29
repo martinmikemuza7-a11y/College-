@@ -11,6 +11,7 @@ import {
   sanitizeQuestionText,
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
+import { parsePastPaperText } from '../server/pastPaperProcessing.js';
 
 // Initialize in-memory database
 initDb();
@@ -110,6 +111,47 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
         'Continuation must not repeat a previously delivered question'
       );
     }
+  });
+
+  it('Past-paper extraction preserves original question stems and MCQ options without inventing questions', () => {
+    const extracted = parsePastPaperText(
+      [
+        'Question 1: Which operator accesses the value stored at a pointer address?',
+        'A. Address-of operator',
+        'B. Dereference operator',
+        'C. Scope resolution operator',
+        'D. Conditional operator',
+        'Question 2: Explain the purpose of a function in C++ (5 marks)',
+      ].join('\n'),
+      'C++_2025_exam.txt'
+    );
+
+    assert.strictEqual(extracted.questions.length, 2);
+    assert.strictEqual(extracted.questions[0].questionNumber, '1');
+    assert.strictEqual(extracted.questions[0].prompt, 'Which operator accesses the value stored at a pointer address?');
+    assert.deepStrictEqual(extracted.questions[0].options, [
+      'Address-of operator',
+      'Dereference operator',
+      'Scope resolution operator',
+      'Conditional operator',
+    ]);
+    assert.strictEqual(extracted.questions[0].type, 'multiple_choice');
+    assert.strictEqual(extracted.questions[1].prompt, 'Explain the purpose of a function in C++ (5 marks)');
+    assert.strictEqual(extracted.questions[1].allocatedMarks, 5);
+
+    const subquestions = parsePastPaperText(
+      '1. Functions\n1(a) Define a function.\n1(b) State one benefit of using functions.\n2. Explain function overloading.',
+      'subquestions.txt'
+    );
+    assert.deepStrictEqual(subquestions.questions.map((question) => question.questionNumber), ['1', '1(a)', '1(b)', '2']);
+    assert.strictEqual(subquestions.questions[1].prompt, 'Define a function.');
+    assert.strictEqual(subquestions.questions[2].prompt, 'State one benefit of using functions.');
+
+    const unnumbered = parsePastPaperText(
+      'This is an ordinary paragraph about functions and variables, not an actual exam question.',
+      'not_a_paper.txt'
+    );
+    assert.strictEqual(unnumbered.questions.length, 0, 'Do not fabricate exam questions from ordinary paragraphs');
   });
 
   it('Metadata Sanitizer: Strips copyright, timestamps, file paths, and templates', () => {

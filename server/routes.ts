@@ -4,7 +4,7 @@ import { generateQuizQuestions } from './assessmentEngine.js';
 import { db } from './db.js';
 import { extractContent, processAndIndexMaterial } from './materialProcessing.js';
 import { processPastPaperFile } from './pastPaperProcessing.js';
-import { Course, Folder, Material, PastPaper, SavedQuizResult, StudyCalendarEvent, StudySessionLog, TutorMessage, UserProgress } from './types.js';
+import { Course, Folder, Material, PastPaper, QuizQuestion, SavedQuizResult, StudyCalendarEvent, StudySessionLog, TutorMessage, UserProgress } from './types.js';
 import { retrieveChunks } from './vectorRag.js';
 
 export const router = express.Router();
@@ -314,6 +314,39 @@ router.post('/materials/upload', async (req, res) => {
     db.save();
     res.status(400).json({ error: errorMsg, material });
   }
+});
+
+// Persist generated document-based questions as a reusable question bank.
+router.get('/materials/:id/questions', (req, res) => {
+  const user = getActiveUser();
+  const material = db.data.materials.find((item) => item.id === req.params.id && item.ownerId === user.id);
+  if (!material) return res.status(404).json({ error: 'Material not found' });
+  res.json({ materialId: material.id, questions: material.generatedQuestions || [] });
+});
+
+router.post('/materials/:id/questions', (req, res) => {
+  const user = getActiveUser();
+  const material = db.data.materials.find((item) => item.id === req.params.id && item.ownerId === user.id);
+  if (!material) return res.status(404).json({ error: 'Material not found' });
+
+  const incoming = Array.isArray(req.body?.questions) ? req.body.questions as QuizQuestion[] : [];
+  if (incoming.length === 0) return res.status(400).json({ error: 'Provide at least one question to save' });
+
+  const existing = material.generatedQuestions || [];
+  const normalize = (value: string) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const seen = new Set(existing.map((question) => normalize(question.question)));
+  const additions = incoming.filter((question) => {
+    if (!question || typeof question.question !== 'string' || !question.question.trim()) return false;
+    const key = normalize(question.question);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  material.generatedQuestions = [...existing, ...additions].slice(-500);
+  material.updatedAt = new Date().toISOString();
+  db.save();
+  res.json({ materialId: material.id, savedCount: additions.length, totalSaved: material.generatedQuestions.length, questions: material.generatedQuestions });
 });
 
 router.put('/materials/:id', (req, res) => {

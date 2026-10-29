@@ -62,15 +62,15 @@ export function parsePastPaperText(
     }
 
     // Match question headers e.g. "Question 1", "1.", "1(a)", "Q1:"
-    const qMatch = line.match(/^(?:question\s+(\d+[a-z]?)|(\d+[a-z]?)\.|\(?([0-9]+[a-z]?)\)|Q(\d+):?)\s*(.*)/i);
+    const qMatch = line.match(/^(?:question\s+(\d+[a-z]?(?:\([a-z]\))?)|(\d+[a-z]?(?:\([a-z]\))?)\.|(\d+\([a-z]\))|\(?([0-9]+[a-z]?)\)|Q(\d+):?)[:.)]?\s*(.*)/i);
 
     if (qMatch) {
       if (currentQ && currentQ.prompt) {
         questions.push(finalizeQuestion(currentQ));
       }
 
-      const qNum = qMatch[1] || qMatch[2] || qMatch[3] || qMatch[4] || `${questions.length + 1}`;
-      const rest = qMatch[5] || '';
+      const qNum = qMatch[1] || qMatch[2] || qMatch[3] || qMatch[4] || qMatch[5] || `${questions.length + 1}`;
+      const rest = qMatch[6] || '';
 
       currentQ = {
         questionNumber: qNum,
@@ -91,21 +91,8 @@ export function parsePastPaperText(
     questions.push(finalizeQuestion(currentQ));
   }
 
-  // Fallback structured generation from paragraphs if formal headers not detected
-  if (questions.length === 0 && text.trim().length > 50) {
-    const paras = text.split(/\n\s*\n/).filter((p) => p.trim().length > 40);
-    for (let j = 0; j < Math.min(8, paras.length); j++) {
-      questions.push({
-        questionNumber: `${j + 1}`,
-        section: 'Section A: Theory & Application',
-        type: j % 3 === 0 ? 'short_essay' : j % 3 === 1 ? 'short_answer' : 'multiple_choice',
-        prompt: paras[j].trim(),
-        allocatedMarks: j % 3 === 0 ? 5 : 2,
-        markingGuide: 'Award marks based on correctness, clarity, and conceptual demonstration.',
-        sourcePage: Math.floor(j / 2) + 1,
-      });
-    }
-  }
+  // Do not invent questions from ordinary paragraphs. If numbering is not recognised,
+  // return zero extracted questions so the UI can ask for a clearer/text-readable paper.
 
   return { questions, year, term };
 }
@@ -113,8 +100,10 @@ export function parsePastPaperText(
 function finalizeQuestion(q: Partial<PastPaperQuestionStructure>): PastPaperQuestionStructure {
   let type: QuestionType = 'short_answer';
   const prompt = (q.prompt || '').trim();
+  const inlineMarks = prompt.match(/\[(\d+)\s*(?:marks?|pts?)\]|\((\d+)\s*(?:marks?|pts?)\)/i);
+  const allocatedMarks = q.allocatedMarks || (inlineMarks ? parseInt(inlineMarks[1] || inlineMarks[2], 10) : undefined);
 
-  if (/explain|discuss|describe|contrast|compare|evaluate|analyze/i.test(prompt) || (q.allocatedMarks && q.allocatedMarks >= 4)) {
+  if (/explain|discuss|describe|contrast|compare|evaluate|analyze/i.test(prompt) || (allocatedMarks && allocatedMarks >= 4)) {
     type = 'short_essay';
   } else if (/which of the following|options:|a\)|b\)/i.test(prompt)) {
     type = 'multiple_choice';
@@ -124,12 +113,35 @@ function finalizeQuestion(q: Partial<PastPaperQuestionStructure>): PastPaperQues
     type = 'fill_in_blank';
   }
 
+  // Extract original multiple-choice options when they are embedded in the extracted text.
+  // Keep the stem and option text intact, but render choices as separate selectable options.
+  let cleanPrompt = prompt;
+  let options: string[] | undefined;
+  const optionStart = prompt.search(/(?:^|\s)\(?A\)?[.)]\s+/i);
+  if (optionStart >= 0) {
+    const optionTail = prompt.slice(optionStart).trim();
+    const optionMatches = [...optionTail.matchAll(/(?:^|\s)\(?([A-D])\)?[.)]\s*/gi)];
+    if (optionMatches.length >= 2) {
+      const parsedOptions = optionMatches.map((match, index) => {
+        const start = (match.index || 0) + match[0].length;
+        const end = index + 1 < optionMatches.length ? (optionMatches[index + 1].index || optionTail.length) : optionTail.length;
+        return optionTail.slice(start, end).trim();
+      }).filter(Boolean);
+      if (parsedOptions.length >= 2 && parsedOptions.length <= 4) {
+        options = parsedOptions;
+        cleanPrompt = prompt.slice(0, optionStart).trim() || prompt;
+        type = 'multiple_choice';
+      }
+    }
+  }
+
   return {
     questionNumber: q.questionNumber || '1',
     section: q.section || 'General Questions',
     type,
-    prompt,
-    allocatedMarks: q.allocatedMarks || (type === 'short_essay' ? 5 : 2),
+    prompt: cleanPrompt,
+    options,
+    allocatedMarks: allocatedMarks || (type === 'short_essay' ? 5 : 2),
     markingGuide: q.markingGuide || 'Award full marks for clear conceptual mastery.',
     sourcePage: q.sourcePage || 1,
   };
