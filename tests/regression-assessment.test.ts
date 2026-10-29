@@ -140,7 +140,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.strictEqual(extracted.questions[1].allocatedMarks, 5);
 
     const subquestions = parsePastPaperText(
-      '1. Functions\\n1(a) Define a function.\\n1(b) State one benefit of using functions.\\n2. Explain function overloading.',
+      '1. Functions\n1(a) Define a function.\n1(b) State one benefit of using functions.\n2. Explain function overloading.',
       'subquestions.txt'
     );
     assert.deepStrictEqual(subquestions.questions.map((question) => question.questionNumber), ['1', '1(a)', '1(b)', '2']);
