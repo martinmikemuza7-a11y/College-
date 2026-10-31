@@ -37,16 +37,56 @@ export interface GeneratedQuizBatch {
  */
 export function sanitizeQuestionText(raw: string): string {
   if (!raw) return '';
-  let cleaned = raw.trim();
+  const originalEnding = String(raw).trim().match(/[.!?]$/)?.[0] || '';
+  let cleaned = String(raw).trim();
   cleaned = cleaned.replace(/^\[(?:Past Exam Pattern|Notes-Based Practice|Course Notes|Exam Pattern)\]\s*/i, '');
-  cleaned = cleaned.replace(/^(?:With reference to|According to|Based on|Refer to|As detailed in|As stated in)\s+[^:,?!]+[:,?!]\s*/i, '');
-  cleaned = cleaned.replace(/^(?:According to|Based on)\s+(?:the|this|our)\s+(?:module|lecture|notes?|slides?|document|textbook|chapter|syllabus|curriculum)\s*(?:\([^)]*\)|\[[^\]]*\])?[:,?!]?\s*/i, '');
-  cleaned = cleaned.replace(/^(?:According to|Based on)\s+(?:page|slide)\s*\d+[:,?!]?\s*/i, '');
-  cleaned = cleaned.replace(/^(?:From|In)\s+(?:the|this)\s+(?:notes?|document|slides?|module)[:,?!]?\s*/i, '');
-  if (cleaned.length > 0) {
-    cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+
+  // Remove learning-file references, while preserving academic attribution
+  // such as "According to behaviorists..." or "According to existentialists...".
+  const documentLead = /^(?:according to|based on|as stated in|as described in|as shown in)\s+(?:(?:the|this|our|uploaded|provided|attached|selected|course)\s+)*(?:[\w.'’()/-]+\s+){0,5}(?:document|file|pdf|docx?|slides?|slide deck|presentation|notes|module)(?:\s+(?:document|file))?\s*(?:[,;:—-]\s*|\s+)/i;
+  const materialLead = /^(?:from|in)\s+(?:(?:the|this|uploaded|provided|attached|selected)\s+)*(?:[\w.'’()/-]+\s+){0,4}(?:document|file|pdf|docx?|slides?|slide deck|presentation|notes|module)\s*(?:[,;:—-]\s*|\s+)/i;
+  const documentTail = /\s*,?\s*(?:according to|based on|as stated in|as described in|as shown in)\s+(?:(?:the|this|our|uploaded|provided|attached|selected|course)\s+)*(?:[\w.'’()/-]+\s+){0,5}(?:document|file|pdf|docx?|slides?|slide deck|presentation|notes|module)(?:\s+(?:document|file))?\s*[.!?]?\s*$/i;
+  for (let pass = 0; pass < 2; pass++) {
+    cleaned = cleaned.replace(documentLead, '');
+    cleaned = cleaned.replace(materialLead, '');
+    cleaned = cleaned.replace(documentTail, '');
   }
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  if (originalEnding && !/[.!?]$/.test(cleaned)) cleaned += originalEnding;
+  if (cleaned.length > 0) cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   return cleaned;
+}
+
+function normalizeEvidenceText(value: string): string {
+  return String(value || '').toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const EVIDENCE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'by', 'can',
+  'could', 'did', 'do', 'does', 'for', 'from', 'has', 'have', 'how', 'in',
+  'into', 'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'their',
+  'this', 'those', 'to', 'was', 'were', 'what', 'when', 'where', 'which',
+  'who', 'why', 'with', 'would', 'describe', 'describes', 'explain',
+  'following', 'main', 'primary', 'best', 'question',
+]);
+
+function hasMeaningfulSourceOverlap(value: string, source: string, minimumMatches = 1): boolean {
+  const candidate = new Set(normalizeEvidenceText(value).split(' ')
+    .filter((token) => token.length > 3 && !EVIDENCE_STOP_WORDS.has(token)));
+  const sourceTokens = new Set(normalizeEvidenceText(source).split(' ')
+    .filter((token) => token.length > 3 && !EVIDENCE_STOP_WORDS.has(token)));
+  let matches = 0;
+  for (const token of candidate) {
+    if (sourceTokens.has(token)) matches++;
+    if (matches >= minimumMatches) return true;
+  }
+  return false;
+}
+
+function containsUnnecessaryDocumentReference(question: string): boolean {
+  return /\b(?:according to|based on|as stated in|as described in|as shown in)\b.{0,100}\b(?:document|file|pdf|slides?|presentation|course notes|lecture notes|module)\b/i.test(question);
 }
 
 /**
@@ -98,91 +138,74 @@ export function validateAndNormalizeQuestion(
   batchIndex = 0,
   idx = 0
 ): QuizQuestion | null {
-  if (!q || typeof q !== 'object') return null;
+  if (!q || typeof q !== 'object' || !Array.isArray(sourceChunks) || sourceChunks.length === 0) return null;
 
   const rawQuestion = sanitizeQuestionText(String(q.question || ''));
-  if (rawQuestion.length < 15) return null;
+  if (rawQuestion.length < 15 || containsUnnecessaryDocumentReference(rawQuestion)) return null;
 
-  // Combine source text for grounding and anti-contamination validation
+  // Require a verbatim supporting quote so the question can be traced to course content.
+  const evidenceQuote = String(q.evidenceQuote || '').trim();
+  const normalizedEvidence = normalizeEvidenceText(evidenceQuote);
+  if (normalizedEvidence.length < 24) return null;
+
   const combinedSource = sourceChunks.map((c) => (c.text || '') + ' ' + (c.sourceExcerpt || '')).join(' ');
   const combinedSourceLower = combinedSource.toLowerCase();
-
-  // Validate that question prompt does not contain cross-domain pollutants
-  if (isCrossDomainContaminated(rawQuestion, combinedSourceLower)) {
-    return null;
-  }
+  if (isCrossDomainContaminated(rawQuestion, combinedSourceLower)) return null;
+  if (!hasMeaningfulSourceOverlap(rawQuestion, combinedSource, 1)) return null;
 
   const type: QuestionType = q.type && ['multiple_choice', 'true_false', 'fill_in_blank', 'short_answer', 'short_essay'].includes(q.type)
-    ? q.type
-    : 'multiple_choice';
+    ? q.type : 'multiple_choice';
 
-  // Citation matching
-  const citationIdx = typeof q.citationIndex === 'number' && q.citationIndex >= 0 && q.citationIndex < sourceChunks.length
-    ? q.citationIndex
-    : idx % Math.max(1, sourceChunks.length);
-  const primaryChunk = sourceChunks[citationIdx] || sourceChunks[0];
-
+  const requestedCitationIndex = typeof q.citationIndex === 'number' &&
+    q.citationIndex >= 0 && q.citationIndex < sourceChunks.length ? q.citationIndex : -1;
+  const primaryChunk =
+    requestedCitationIndex >= 0 &&
+    normalizeEvidenceText(sourceChunks[requestedCitationIndex].text || '').includes(normalizedEvidence)
+      ? sourceChunks[requestedCitationIndex]
+      : sourceChunks.find((chunk) => normalizeEvidenceText(chunk.text || '').includes(normalizedEvidence));
   if (!primaryChunk) return null;
 
   let options: string[] | undefined;
   let correctAnswer = String(q.correctAnswer || '').trim();
 
   if (type === 'multiple_choice') {
-    let rawOptions: string[] = Array.isArray(q.options) ? q.options.map((o: any) => String(o || '').trim()) : [];
-    
-    // Ensure exactly 4 options
-    if (rawOptions.length !== 4) {
-      return null;
-    }
+    const rawOptions: string[] = Array.isArray(q.options)
+      ? q.options.map((option: any) => String(option || '').trim()) : [];
+    if (rawOptions.length !== 4) return null;
 
-    // Verify all options are non-empty and non-placeholder
-    const cleanOpts = rawOptions.map((opt) => opt.replace(/^[A-D][.)]\s*/i, '').trim());
-    for (const opt of cleanOpts) {
-      if (opt.length < 3) return null;
-      if (/^option\s+[A-D]$/i.test(opt) || /^choice\s+[A-D]$/i.test(opt)) return null;
-      if (isCrossDomainContaminated(opt, combinedSourceLower)) {
-        return null; // Distractor contains unrelated technical terms
-      }
-    }
+    const cleanOpts = rawOptions.map((option) => option.replace(/^[A-D][.)]\s*/i, '').trim());
+    if (cleanOpts.some((option) => option.length < 3 ||
+      /^option\s+[A-D]$/i.test(option) || /^choice\s+[A-D]$/i.test(option) ||
+      isCrossDomainContaminated(option, combinedSourceLower) ||
+      !hasMeaningfulSourceOverlap(option, combinedSource, 1))) return null;
 
-    // Check for distinctness (no duplicates)
-    const unique = new Set(cleanOpts.map((o) => o.toLowerCase()));
-    if (unique.size !== 4) return null;
+    if (new Set(cleanOpts.map((option) => normalizeEvidenceText(option))).size !== 4) return null;
 
-    // Check that correct answer is present
     const cleanCorrect = correctAnswer.replace(/^[A-D][.)]\s*/i, '').trim().toLowerCase();
-    const matchIndex = cleanOpts.findIndex((opt) => opt.toLowerCase() === cleanCorrect || cleanCorrect.includes(opt.toLowerCase()) || opt.toLowerCase().includes(cleanCorrect));
-    
-    if (matchIndex === -1 && !/^[A-D]$/i.test(correctAnswer)) {
-      return null; // Correct answer not in options
-    }
+    const labelMatch = correctAnswer.match(/^([A-D])$/i);
+    const matchIndex = labelMatch
+      ? labelMatch[1].toUpperCase().charCodeAt(0) - 65
+      : cleanOpts.findIndex((option) => option.toLowerCase() === cleanCorrect ||
+          (cleanCorrect.length > 3 && cleanCorrect.includes(option.toLowerCase())) ||
+          (option.toLowerCase().length > 3 && option.toLowerCase().includes(cleanCorrect)));
+    if (matchIndex < 0 || matchIndex > 3) return null;
+    if (!hasMeaningfulSourceOverlap(cleanOpts[matchIndex], evidenceQuote, 1)) return null;
 
-    // Standardize options with clean A, B, C, D labels
-    options = [
-      `A. ${cleanOpts[0]}`,
-      `B. ${cleanOpts[1]}`,
-      `C. ${cleanOpts[2]}`,
-      `D. ${cleanOpts[3]}`,
-    ];
-
-    const finalCorrectIndex = matchIndex >= 0 ? matchIndex : 0;
-    correctAnswer = options[finalCorrectIndex];
+    options = ['A. ' + cleanOpts[0], 'B. ' + cleanOpts[1], 'C. ' + cleanOpts[2], 'D. ' + cleanOpts[3]];
+    correctAnswer = options[matchIndex];
   } else if (type === 'true_false') {
     options = ['True', 'False'];
-    const norm = correctAnswer.toLowerCase();
-    correctAnswer = norm.includes('false') ? 'False' : 'True';
+    const normalizedAnswer = correctAnswer.toLowerCase();
+    if (normalizedAnswer !== 'true' && normalizedAnswer !== 'false') return null;
+    correctAnswer = normalizedAnswer === 'false' ? 'False' : 'True';
   } else {
-    // Fill in blank, short answer, or short essay
-    if (!correctAnswer || correctAnswer.length < 2) {
-      return null;
-    }
-    if (isCrossDomainContaminated(correctAnswer, combinedSourceLower)) {
-      return null;
-    }
+    if (!correctAnswer || correctAnswer.length < 2) return null;
+    if (isCrossDomainContaminated(correctAnswer, combinedSourceLower)) return null;
+    if (!hasMeaningfulSourceOverlap(correctAnswer, evidenceQuote, 1)) return null;
   }
 
   return {
-    id: q.id || `q_val_${Date.now()}_${batchIndex}_${idx + 1}`,
+    id: q.id || ('q_val_' + Date.now() + '_' + batchIndex + '_' + (idx + 1)),
     type,
     difficulty: q.difficulty || 'medium',
     allocatedMarks: q.allocatedMarks || (type === 'short_essay' ? 5 : type === 'short_answer' ? 3 : 2),
@@ -191,27 +214,24 @@ export function validateAndNormalizeQuestion(
     questionStyle: q.questionStyle || (type === 'multiple_choice' ? 'Concept Verification' : 'Analytical Assessment'),
     options,
     correctAnswer,
-    explanation: q.explanation || `Grounded in ${primaryChunk.filename} (Page/Slide ${primaryChunk.pageOrSlide}): "${primaryChunk.sourceExcerpt}".`,
-    markingPoints: q.markingPoints || (type === 'short_essay' ? ['Defines core concept accurately [2 marks]', 'Explains functional mechanism [2 marks]', 'States significance [1 mark]'] : undefined),
+    explanation: q.explanation || ('Grounded in ' + primaryChunk.filename + ' (Page/Slide ' + primaryChunk.pageOrSlide + '): "' + primaryChunk.sourceExcerpt + '".'),
+    markingPoints: q.markingPoints || (type === 'short_essay' ? ['Defines core concept accurately [2 marks]', 'Explains a source-supported detail [2 marks]', 'Uses accurate terminology [1 mark]'] : undefined),
     sampleAnswer: q.sampleAnswer || correctAnswer,
     acceptableAnswers: q.acceptableAnswers || [correctAnswer],
     isVerifiedFromNotes: true,
-    verificationNote: `Verified in ${primaryChunk.filename} (Page/Slide ${primaryChunk.pageOrSlide})`,
-    citations: [
-      {
-        chunkId: primaryChunk.chunkId,
-        documentId: primaryChunk.documentId,
-        filename: primaryChunk.filename,
-        courseId: primaryChunk.courseId,
-        folderId: primaryChunk.folderId,
-        pageOrSlide: primaryChunk.pageOrSlide,
-        sourceExcerpt: primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220),
-        relevanceScore: 0.96,
-      },
-    ],
+    verificationNote: 'Verified in ' + primaryChunk.filename + ' (Page/Slide ' + primaryChunk.pageOrSlide + ')',
+    citations: [{
+      chunkId: primaryChunk.chunkId,
+      documentId: primaryChunk.documentId,
+      filename: primaryChunk.filename,
+      courseId: primaryChunk.courseId,
+      folderId: primaryChunk.folderId,
+      pageOrSlide: primaryChunk.pageOrSlide,
+      sourceExcerpt: primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220),
+      relevanceScore: 0.96,
+    }],
   };
 }
-
 const QUESTION_COMPARISON_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'based', 'by', 'can',
   'could', 'describe', 'describes', 'did', 'do', 'does', 'explain', 'for', 'from',
@@ -498,11 +518,8 @@ ${answerContext}`;
     try {
       const contextText = chunkBatch
         .slice(0, 10)
-        .map(
-          (c, i) =>
-            `[Source Document ${i + 1}: ${c.filename}, Page/Slide ${c.pageOrSlide}]\n${c.text}`
-        )
-        .join('\n\n');
+        .map((c, i) => `[COURSE PASSAGE ${i + 1}]\n${c.text}`)
+        .join('\n\n---\n\n');
 
       const typesList =
         questionTypes && questionTypes.length > 0
@@ -513,46 +530,67 @@ ${answerContext}`;
         ? priorQuestionTexts.map((question, index) => `${index + 1}. ${question}`).join('\n')
         : '(No questions generated yet.)';
 
-      let prompt = `You are a university academic examiner. Generate EXACTLY ${batchSize} rigorous assessment questions based STRICTLY on the substantive educational concepts in the provided course excerpts.
+      let prompt = `You are an experienced university examiner writing a fair, natural exam paper for students.
 
-CRITICAL SUBJECT RELEVANCE & GROUNDING RULES:
-1. ONLY USE THE PROVIDED TEXT: All tested concepts, principles, and correct answers must be verifiably stated in the Course Excerpts below.
-2. STRICT SUBJECT ISOLATION: For multiple-choice questions, ALL 3 distractors MUST belong to the SAME academic domain as the source material (e.g. if the material is Psychology, all options must be psychology concepts; NEVER include unrelated machine learning, engineering, or biology terms).
-3. EXACTLY 4 OPTIONS: Multiple choice questions MUST have exactly 4 answer options: A, B, C, and D, with exactly one defensibly correct answer.
-4. NO META-PHRASES: Do NOT begin questions with "According to the document...", "According to the module...", or "Based on slide...". Start directly with "What is...", "Explain...", "Which of the following describes...", etc.
-5. NO METADATA: Do not ask questions about document filenames, slide numbers, authors, or copyright notices.
+SOURCE PRIORITY:
+- The uploaded course passages are the ONLY authority for facts, concepts, definitions, explanations, and correct answers.
+- Uploaded past papers are STYLE REFERENCES ONLY. Use them to match exam structure, wording level, section style, question types, and mark allocation. Never copy their subject matter unless it is also present in the course passages.
+- Do not use outside knowledge to fill gaps. If the course passages cannot support a clear answer, do not create that question.
 
-Target Difficulty: ${difficulty}.
-Allowed Question Types: ${typesList}.
-Style focus: ${questionStyle || 'balanced exam mix'}.
+QUESTION QUALITY RULES:
+1. Write each question in natural, grammatically correct academic English. It must sound like a real lecturer or examiner wrote it.
+2. Ask about a specific concept, definition, process, purpose, comparison, cause, effect, or principle that is clearly covered in the course passages.
+3. Make every question standalone, precise, unambiguous, and answerable from the supplied course passages. Avoid vague wording such as "discuss the topic" or "explain what is mentioned".
+4. Do NOT refer to the uploaded document, file, notes, slides, page, filename, or source in the question. Never write phrases such as "According to the document", "According to the notes", "Based on the uploaded file", or "As stated in the slides".
+5. Academic attribution is allowed when it is part of the subject itself (for example, "What did behaviorists argue?"). Do not remove or avoid the names of theories, scholars, or schools of thought.
+6. Test one clear learning point per question. Do not add unsupported requests for significance, advantages, disadvantages, applications, or implications unless those points appear in the course passages.
+7. Keep question wording concise. Do not combine several unrelated tasks in one question.
+8. For multiple-choice questions, provide exactly four distinct options and exactly one defensibly correct answer. Every option must be a real concept, fact, or position found in the course passages. Distractors must be plausible and from the same subject area. Never invent filler distractors or unrelated terminology.
+9. For true/false questions, write a clear factual statement. Do not alter a source statement into a false statement unless the supplied passages clearly establish the contradiction.
+10. For short-answer and essay questions, keep the requested answer proportional to the marks and the evidence available. Do not ask for a long discussion when the passages support only a short answer.
+11. Do not repeat, lightly reword, or test the same fact as a previously generated question.
 
-PREVIOUSLY GENERATED QUESTIONS — DO NOT REPEAT OR PARAPHRASE THESE:
+GROUNDING REQUIREMENT:
+- Every question must include an "evidenceQuote" copied verbatim from one course passage. The quote must be a complete, relevant sentence or clause that directly supports the question and its correct answer.
+- Set "citationIndex" to the zero-based course-passage number containing that exact quote.
+- Make the question and answer directly answerable from that quote. Do not use a quote that merely mentions the topic without supporting the answer.
+
+TARGETS:
+- Generate at most ${batchSize} high-quality questions in this batch. Return fewer rather than creating weak, repetitive, ambiguous, or unsupported questions.
+- Target difficulty: ${difficulty}.
+- Allowed question types: ${typesList}.
+- Style focus: ${questionStyle || 'balanced exam mix'}.
+
+PREVIOUSLY GENERATED QUESTIONS — DO NOT REPEAT OR PARAPHRASE:
 ${previousQuestionNotes}
 
-${styleNotes ? `${styleNotes}\n\n` : ''}
-COURSE EXCERPTS:
+${styleNotes ? styleNotes + '\\n\\nRemember: past-paper examples guide structure and wording only; do not copy their facts or topics unless those facts also appear in the course passages.\\n\\n' : ''}
+COURSE PASSAGES:
 ${contextText}
 
-OUTPUT FORMAT: Return ONLY a valid JSON array of ${batchSize} objects:
-[
-  {
-    "id": "q_${Date.now()}_1",
-    "type": "multiple_choice | true_false | fill_in_blank | short_answer | short_essay",
-    "difficulty": "${difficulty}",
-    "allocatedMarks": 2,
-    "question": "Direct exam question (e.g. What is...)",
-    "topic": "Core topic name from text",
-    "questionStyle": "Concept Verification",
-    "options": ["A. Option 1", "B. Option 2", "C. Option 3", "D. Option 4"],
-    "correctAnswer": "A. Option 1",
-    "explanation": "Clear explanation citing the source text passage",
-    "markingPoints": ["Key point 1", "Key point 2"],
-    "sampleAnswer": "Model solution",
-    "acceptableAnswers": ["Synonym 1"],
-    "isVerifiedFromNotes": true,
-    "citationIndex": 0
-  }
-]`;
+OUTPUT:
+Return ONLY a valid JSON array. Each object must use this schema:
+{
+  "id": "unique question id",
+  "type": "multiple_choice | true_false | fill_in_blank | short_answer | short_essay",
+  "difficulty": "${difficulty}",
+  "allocatedMarks": 2,
+  "question": "A natural, direct exam question",
+  "topic": "A specific topic from the course passages",
+  "questionStyle": "A concise exam-style label",
+  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+  "correctAnswer": "The exact correct option, answer, or True/False",
+  "explanation": "A short explanation of why the answer is correct",
+  "markingPoints": ["Specific evidence-based marking point"],
+  "sampleAnswer": "A concise model answer",
+  "acceptableAnswers": ["A valid equivalent answer"],
+  "evidenceQuote": "An exact complete sentence or clause copied from a course passage",
+  "isVerifiedFromNotes": true,
+  "citationIndex": 0
+}
+
+Return a JSON array with no markdown fences and no commentary.`;
+
 
       const responseText = await generateGroundedContent({
         prompt,
@@ -668,7 +706,7 @@ export function generateDomainGroundedQuestions(
       const appositiveMatch = clean.match(/^([A-Z][^,;:—–-]{2,45}?),\s+([^,]+?),\s+([a-z].+)$/i);
       if (appositiveMatch) {
         concept = appositiveMatch[1].trim();
-        predicate = `${appositiveMatch[2].trim()}, ${appositiveMatch[3].trim()}`;
+        predicate = appositiveMatch[3].trim();
       }
 
       // Pattern 2: Explicit definition/verb pattern
@@ -742,16 +780,9 @@ export function generateDomainGroundedQuestions(
         if (distractors.length >= 3) break;
       }
 
-      // If document has fewer than 3 other predicates, generate domain-grounded plausible contrastive options
-      if (distractors.length < 1) {
-        distractors.push(`It operates inversely to ${fact.concept}, suppressing its typical function.`);
-      }
-      if (distractors.length < 2) {
-        distractors.push(`It is restricted exclusively to peripheral conditions without direct involvement in ${fact.concept}.`);
-      }
-      if (distractors.length < 3) {
-        distractors.push(`It represents an obsolete hypothesis superseded by empirical findings related to ${fact.concept}.`);
-      }
+      // Never invent generic distractors just to complete an MCQ.
+      // If the notes do not contain three distinct alternatives, skip this MCQ.
+      if (distractors.length < 3) continue;
 
       // Assemble 4 options and shuffle deterministically
       const rawChoices = [correctText, distractors[0], distractors[1], distractors[2]];
@@ -774,9 +805,9 @@ export function generateDomainGroundedQuestions(
         type: 'multiple_choice',
         difficulty,
         allocatedMarks: 2,
-        question: `Which of the following accurately describes or defines ${fact.concept}?`,
+        question: `Which statement best describes ${fact.concept}?`,
         topic: fact.concept,
-        questionStyle: mode === 'past_paper' ? 'Past Paper Multiple Choice' : 'Definition & Verification',
+        questionStyle: mode === 'past_paper' ? 'Past Paper Multiple Choice' : 'Concept Check',
         options: labeledOptions,
         correctAnswer: finalCorrectAnswer,
         explanation: `Grounded in ${chunk.filename} (Page/Slide ${chunk.pageOrSlide}): "${fact.fullSentence}".`,
@@ -798,20 +829,16 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else if (type === 'true_false') {
-      const isTrue = sequenceIndex % 2 === 0;
-      let statement = fact.fullSentence;
-
-      if (!isTrue) {
-        // Negate statement using domain terms
-        statement = statement.replace(/\b(is|was|are|were|has|have|acts|operates)\b/i, '$1 not');
-      }
+      // Keep the source statement intact; do not create unsupported false claims.
+      const isTrue = true;
+      const statement = fact.fullSentence.replace(/[.!?]+$/, '');
 
       q = {
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'true_false',
         difficulty,
         allocatedMarks: 1,
-        question: `True or False: ${statement}.`,
+        question: `True or False: ${statement}?`,
         topic: fact.concept,
         questionStyle: mode === 'past_paper' ? 'Exam True/False' : 'Fact Validation',
         options: ['True', 'False'],
@@ -835,16 +862,14 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else if (type === 'fill_in_blank') {
-      const words = fact.concept.split(/\s+/).filter((w) => w.length > 3);
-      const targetWord = words[words.length - 1] || fact.concept;
-      const blankSentence = fact.fullSentence.replace(new RegExp(`\\b${targetWord}\\b`, 'i'), '__________');
+      const targetWord = fact.concept;
 
       q = {
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'fill_in_blank',
         difficulty,
         allocatedMarks: 2,
-        question: `Complete the following statement: ${blankSentence}`,
+        question: `What concept is described by this statement: ${fact.predicate}?`,
         topic: fact.concept,
         questionStyle: 'Cloze Deletion',
         correctAnswer: targetWord,
@@ -872,17 +897,16 @@ export function generateDomainGroundedQuestions(
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'short_essay',
         difficulty,
-        allocatedMarks: 5,
-        question: `Explain the fundamental principles and significance of ${fact.concept}. Discuss how it operates in the context of the course material.`,
+        allocatedMarks: 3,
+        question: `Explain ${fact.concept} and describe its main features.`,
         topic: fact.concept,
         questionStyle: mode === 'past_paper' ? 'Past Paper Essay Prompt' : 'Explanations & Mechanisms',
         correctAnswer: fact.fullSentence,
         markingPoints: [
-          `Accurately defines ${fact.concept} [2 marks].`,
-          'Explains the primary mechanism, methodology, or context [2 marks].',
-          'Discusses broader implications or significance [1 mark].',
+          `Explains the main idea of ${fact.concept} [2 marks].`,
+          'Includes one relevant supporting detail from the course content [1 mark].',
         ],
-        sampleAnswer: `The material establishes that ${fact.fullSentence}. This principle provides a foundational framework for understanding the underlying phenomena within the discipline.`,
+        sampleAnswer: fact.fullSentence,
         explanation: `Comprehensive analysis grounded in ${chunk.filename} (Page/Slide ${chunk.pageOrSlide}): "${fact.fullSentence}".`,
         isVerifiedFromNotes: true,
         verificationNote: `Verified in ${chunk.filename} (Page/Slide ${chunk.pageOrSlide})`,
@@ -902,14 +926,24 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else {
+      const predicateLower = fact.predicate.toLowerCase();
+      let shortQuestion = `What is ${fact.concept}?`;
+      if (predicateLower.includes('aimed to')) shortQuestion = `What was the main aim of ${fact.concept}?`;
+      else if (predicateLower.includes('investigated')) shortQuestion = `What did ${fact.concept} investigate?`;
+      else if (predicateLower.includes('argued that')) shortQuestion = `What did ${fact.concept} argue?`;
+      else if (predicateLower.includes('established')) shortQuestion = `What did ${fact.concept} establish?`;
+      else if (predicateLower.includes('consists of')) shortQuestion = `What does ${fact.concept} consist of?`;
+      else if (predicateLower.includes('emerged to')) shortQuestion = `What did ${fact.concept} emerge to explore?`;
+      else if (predicateLower.includes('developed by') || predicateLower.includes('pioneered by')) shortQuestion = `Who developed ${fact.concept}?`;
+
       q = {
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'short_answer',
         difficulty,
         allocatedMarks: 3,
-        question: `What is ${fact.concept}, and what is its primary definition or function?`,
+        question: shortQuestion,
         topic: fact.concept,
-        questionStyle: mode === 'past_paper' ? 'Past Paper Short Answer' : 'Definitions & Facts',
+        questionStyle: mode === 'past_paper' ? 'Past Paper Short Answer' : 'Direct Recall',
         correctAnswer: fact.predicate.slice(0, 120),
         markingPoints: [
           `States precise definition of ${fact.concept} [2 marks].`,

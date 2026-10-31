@@ -9,6 +9,7 @@ import {
   isCrossDomainContaminated,
   isDuplicateQuestion,
   sanitizeQuestionText,
+  validateAndNormalizeQuestion,
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
 import { parsePastPaperText } from '../server/pastPaperProcessing.js';
@@ -53,6 +54,62 @@ SlideMaster Template v2.1
 Downloaded on 2024-09-01 by student_448`;
 
 describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite', () => {
+
+
+  it('Question cleaner removes file references but preserves academic attribution', () => {
+    assert.strictEqual(
+      sanitizeQuestionText('According to the uploaded Psychology lecture document, what was the aim of structuralism?'),
+      'What was the aim of structuralism?'
+    );
+    assert.strictEqual(
+      sanitizeQuestionText('What is the definition of psychology, according to the course notes?'),
+      'What is the definition of psychology?'
+    );
+    assert.strictEqual(
+      sanitizeQuestionText('According to behaviorists, psychology should focus on observable behaviour.'),
+      'According to behaviorists, psychology should focus on observable behaviour.'
+    );
+  });
+
+  it('Question validator requires an exact supporting passage', () => {
+    const chunk = {
+      chunkId: 'evidence_chunk',
+      documentId: 'evidence_doc',
+      filename: 'psychology_notes.pdf',
+      courseId: 'course_evidence',
+      folderId: null,
+      pageOrSlide: 2,
+      text: 'Structuralism aimed to analyze the basic elements of conscious mental experience through systematic self-observation known as introspection.',
+      sourceExcerpt: 'Structuralism aimed to analyze the basic elements of conscious mental experience through systematic self-observation known as introspection.',
+    };
+    const question = {
+      type: 'short_answer',
+      question: 'What was the main aim of structuralism?',
+      correctAnswer: 'To analyze the basic elements of conscious mental experience through introspection.',
+      evidenceQuote: chunk.text,
+      citationIndex: 0,
+    };
+    assert.ok(validateAndNormalizeQuestion(question, [chunk]));
+    assert.strictEqual(
+      validateAndNormalizeQuestion({ ...question, evidenceQuote: 'A vague reference to the topic.' }, [chunk]),
+      null
+    );
+  });
+
+  it('Fallback MCQ generator does not invent distractors when the notes contain only one fact', () => {
+    const chunk = {
+      chunkId: 'one_fact_chunk',
+      documentId: 'one_fact_doc',
+      filename: 'one_fact.txt',
+      courseId: 'one_fact_course',
+      folderId: null,
+      pageOrSlide: 1,
+      text: 'Psychology is defined as the scientific study of mind and behavior in humans and other animals.',
+      sourceExcerpt: 'Psychology is defined as the scientific study of mind and behavior in humans and other animals.',
+    };
+    const questions = generateDomainGroundedQuestions([chunk], 3, 'medium', ['multiple_choice'], 'notes_based');
+    assert.strictEqual(questions.length, 0);
+  });
 
   it('Batch planner uses the total requested count across sequential batches', () => {
     assert.strictEqual(calculateQuestionBatchSize(10, 0), 5);
