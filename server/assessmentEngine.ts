@@ -37,6 +37,7 @@ export interface GeneratedQuizBatch {
  */
 export function sanitizeQuestionText(raw: string): string {
   if (!raw) return '';
+  const originalEnding = String(raw).trim().match(/[.!?]$/)?.[0] || '';
   let cleaned = String(raw).trim();
   cleaned = cleaned.replace(/^\[(?:Past Exam Pattern|Notes-Based Practice|Course Notes|Exam Pattern)\]\s*/i, '');
 
@@ -51,6 +52,7 @@ export function sanitizeQuestionText(raw: string): string {
     cleaned = cleaned.replace(documentTail, '');
   }
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  if (originalEnding && !/[.!?]$/.test(cleaned)) cleaned += originalEnding;
   if (cleaned.length > 0) cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   return cleaned;
 }
@@ -704,7 +706,7 @@ export function generateDomainGroundedQuestions(
       const appositiveMatch = clean.match(/^([A-Z][^,;:—–-]{2,45}?),\s+([^,]+?),\s+([a-z].+)$/i);
       if (appositiveMatch) {
         concept = appositiveMatch[1].trim();
-        predicate = `${appositiveMatch[2].trim()}, ${appositiveMatch[3].trim()}`;
+        predicate = appositiveMatch[3].trim();
       }
 
       // Pattern 2: Explicit definition/verb pattern
@@ -803,9 +805,9 @@ export function generateDomainGroundedQuestions(
         type: 'multiple_choice',
         difficulty,
         allocatedMarks: 2,
-        question: `Which of the following accurately describes or defines ${fact.concept}?`,
+        question: `Which statement best describes ${fact.concept}?`,
         topic: fact.concept,
-        questionStyle: mode === 'past_paper' ? 'Past Paper Multiple Choice' : 'Definition & Verification',
+        questionStyle: mode === 'past_paper' ? 'Past Paper Multiple Choice' : 'Concept Check',
         options: labeledOptions,
         correctAnswer: finalCorrectAnswer,
         explanation: `Grounded in ${chunk.filename} (Page/Slide ${chunk.pageOrSlide}): "${fact.fullSentence}".`,
