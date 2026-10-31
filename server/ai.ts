@@ -154,14 +154,21 @@ export async function generateGroundedContent(options: {
           await new Promise((r) => setTimeout(r, 800));
         }
 
+        // Gemini 3.8 Flash uses the model's default sampling behaviour.
+        // Google’s current migration guidance removes temperature/top-p/top-k
+        // from Gemini 3.8 requests; retain temperature only for the fallback model.
+        const generationConfig = {
+          responseMimeType: options.responseMimeType,
+          ...(model === 'gemini-3.8-flash'
+            ? {}
+            : { temperature: options.temperature ?? 0.2 }),
+        };
+
         const response = await Promise.race([
           ai.models.generateContent({
             model,
             contents: options.prompt,
-            config: {
-              temperature: options.temperature ?? 0.2,
-              responseMimeType: options.responseMimeType,
-            },
+            config: generationConfig,
           }),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`Timeout calling ${model}`)), 15000)
