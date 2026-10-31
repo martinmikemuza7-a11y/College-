@@ -37,16 +37,54 @@ export interface GeneratedQuizBatch {
  */
 export function sanitizeQuestionText(raw: string): string {
   if (!raw) return '';
-  let cleaned = raw.trim();
+  let cleaned = String(raw).trim();
   cleaned = cleaned.replace(/^\[(?:Past Exam Pattern|Notes-Based Practice|Course Notes|Exam Pattern)\]\s*/i, '');
-  cleaned = cleaned.replace(/^(?:With reference to|According to|Based on|Refer to|As detailed in|As stated in)\s+[^:,?!]+[:,?!]\s*/i, '');
-  cleaned = cleaned.replace(/^(?:According to|Based on)\s+(?:the|this|our)\s+(?:module|lecture|notes?|slides?|document|textbook|chapter|syllabus|curriculum)\s*(?:\([^)]*\)|\[[^\]]*\])?[:,?!]?\s*/i, '');
-  cleaned = cleaned.replace(/^(?:According to|Based on)\s+(?:page|slide)\s*\d+[:,?!]?\s*/i, '');
-  cleaned = cleaned.replace(/^(?:From|In)\s+(?:the|this)\s+(?:notes?|document|slides?|module)[:,?!]?\s*/i, '');
-  if (cleaned.length > 0) {
-    cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+
+  // Remove learning-file references, while preserving academic attribution
+  // such as "According to behaviorists..." or "According to existentialists...".
+  const documentLead = /^(?:according to|based on|as stated in|as described in|as shown in)\s+(?:(?:the|this|our|uploaded|provided|attached|selected|course)\s+)*(?:[\w.'’()/-]+\s+){0,5}(?:document|file|pdf|docx?|slides?|slide deck|presentation|notes|module)(?:\s+(?:document|file))?\s*(?:[,;:—-]\s*|\s+)/i;
+  const materialLead = /^(?:from|in)\s+(?:(?:the|this|uploaded|provided|attached|selected)\s+)*(?:[\w.'’()/-]+\s+){0,4}(?:document|file|pdf|docx?|slides?|slide deck|presentation|notes|module)\s*(?:[,;:—-]\s*|\s+)/i;
+  const documentTail = /\s*,?\s*(?:according to|based on|as stated in|as described in|as shown in)\s+(?:(?:the|this|our|uploaded|provided|attached|selected|course)\s+)*(?:[\w.'’()/-]+\s+){0,5}(?:document|file|pdf|docx?|slides?|slide deck|presentation|notes|module)(?:\s+(?:document|file))?\s*[.!?]?\s*$/i;
+  for (let pass = 0; pass < 2; pass++) {
+    cleaned = cleaned.replace(documentLead, '');
+    cleaned = cleaned.replace(materialLead, '');
+    cleaned = cleaned.replace(documentTail, '');
   }
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  if (cleaned.length > 0) cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
   return cleaned;
+}
+
+function normalizeEvidenceText(value: string): string {
+  return String(value || '').toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const EVIDENCE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'by', 'can',
+  'could', 'did', 'do', 'does', 'for', 'from', 'has', 'have', 'how', 'in',
+  'into', 'is', 'it', 'its', 'of', 'on', 'or', 'that', 'the', 'their',
+  'this', 'those', 'to', 'was', 'were', 'what', 'when', 'where', 'which',
+  'who', 'why', 'with', 'would', 'describe', 'describes', 'explain',
+  'following', 'main', 'primary', 'best', 'question',
+]);
+
+function hasMeaningfulSourceOverlap(value: string, source: string, minimumMatches = 1): boolean {
+  const candidate = new Set(normalizeEvidenceText(value).split(' ')
+    .filter((token) => token.length > 3 && !EVIDENCE_STOP_WORDS.has(token)));
+  const sourceTokens = new Set(normalizeEvidenceText(source).split(' ')
+    .filter((token) => token.length > 3 && !EVIDENCE_STOP_WORDS.has(token)));
+  let matches = 0;
+  for (const token of candidate) {
+    if (sourceTokens.has(token)) matches++;
+    if (matches >= minimumMatches) return true;
+  }
+  return false;
+}
+
+function containsUnnecessaryDocumentReference(question: string): boolean {
+  return /\b(?:according to|based on|as stated in|as described in|as shown in)\b.{0,100}\b(?:document|file|pdf|slides?|presentation|course notes|lecture notes|module)\b/i.test(question);
 }
 
 /**
@@ -98,91 +136,74 @@ export function validateAndNormalizeQuestion(
   batchIndex = 0,
   idx = 0
 ): QuizQuestion | null {
-  if (!q || typeof q !== 'object') return null;
+  if (!q || typeof q !== 'object' || !Array.isArray(sourceChunks) || sourceChunks.length === 0) return null;
 
   const rawQuestion = sanitizeQuestionText(String(q.question || ''));
-  if (rawQuestion.length < 15) return null;
+  if (rawQuestion.length < 15 || containsUnnecessaryDocumentReference(rawQuestion)) return null;
 
-  // Combine source text for grounding and anti-contamination validation
+  // Require a verbatim supporting quote so the question can be traced to course content.
+  const evidenceQuote = String(q.evidenceQuote || '').trim();
+  const normalizedEvidence = normalizeEvidenceText(evidenceQuote);
+  if (normalizedEvidence.length < 24) return null;
+
   const combinedSource = sourceChunks.map((c) => (c.text || '') + ' ' + (c.sourceExcerpt || '')).join(' ');
   const combinedSourceLower = combinedSource.toLowerCase();
-
-  // Validate that question prompt does not contain cross-domain pollutants
-  if (isCrossDomainContaminated(rawQuestion, combinedSourceLower)) {
-    return null;
-  }
+  if (isCrossDomainContaminated(rawQuestion, combinedSourceLower)) return null;
+  if (!hasMeaningfulSourceOverlap(rawQuestion, combinedSource, 1)) return null;
 
   const type: QuestionType = q.type && ['multiple_choice', 'true_false', 'fill_in_blank', 'short_answer', 'short_essay'].includes(q.type)
-    ? q.type
-    : 'multiple_choice';
+    ? q.type : 'multiple_choice';
 
-  // Citation matching
-  const citationIdx = typeof q.citationIndex === 'number' && q.citationIndex >= 0 && q.citationIndex < sourceChunks.length
-    ? q.citationIndex
-    : idx % Math.max(1, sourceChunks.length);
-  const primaryChunk = sourceChunks[citationIdx] || sourceChunks[0];
-
+  const requestedCitationIndex = typeof q.citationIndex === 'number' &&
+    q.citationIndex >= 0 && q.citationIndex < sourceChunks.length ? q.citationIndex : -1;
+  const primaryChunk =
+    requestedCitationIndex >= 0 &&
+    normalizeEvidenceText(sourceChunks[requestedCitationIndex].text || '').includes(normalizedEvidence)
+      ? sourceChunks[requestedCitationIndex]
+      : sourceChunks.find((chunk) => normalizeEvidenceText(chunk.text || '').includes(normalizedEvidence));
   if (!primaryChunk) return null;
 
   let options: string[] | undefined;
   let correctAnswer = String(q.correctAnswer || '').trim();
 
   if (type === 'multiple_choice') {
-    let rawOptions: string[] = Array.isArray(q.options) ? q.options.map((o: any) => String(o || '').trim()) : [];
-    
-    // Ensure exactly 4 options
-    if (rawOptions.length !== 4) {
-      return null;
-    }
+    const rawOptions: string[] = Array.isArray(q.options)
+      ? q.options.map((option: any) => String(option || '').trim()) : [];
+    if (rawOptions.length !== 4) return null;
 
-    // Verify all options are non-empty and non-placeholder
-    const cleanOpts = rawOptions.map((opt) => opt.replace(/^[A-D][.)]\s*/i, '').trim());
-    for (const opt of cleanOpts) {
-      if (opt.length < 3) return null;
-      if (/^option\s+[A-D]$/i.test(opt) || /^choice\s+[A-D]$/i.test(opt)) return null;
-      if (isCrossDomainContaminated(opt, combinedSourceLower)) {
-        return null; // Distractor contains unrelated technical terms
-      }
-    }
+    const cleanOpts = rawOptions.map((option) => option.replace(/^[A-D][.)]\s*/i, '').trim());
+    if (cleanOpts.some((option) => option.length < 3 ||
+      /^option\s+[A-D]$/i.test(option) || /^choice\s+[A-D]$/i.test(option) ||
+      isCrossDomainContaminated(option, combinedSourceLower) ||
+      !hasMeaningfulSourceOverlap(option, combinedSource, 1))) return null;
 
-    // Check for distinctness (no duplicates)
-    const unique = new Set(cleanOpts.map((o) => o.toLowerCase()));
-    if (unique.size !== 4) return null;
+    if (new Set(cleanOpts.map((option) => normalizeEvidenceText(option))).size !== 4) return null;
 
-    // Check that correct answer is present
     const cleanCorrect = correctAnswer.replace(/^[A-D][.)]\s*/i, '').trim().toLowerCase();
-    const matchIndex = cleanOpts.findIndex((opt) => opt.toLowerCase() === cleanCorrect || cleanCorrect.includes(opt.toLowerCase()) || opt.toLowerCase().includes(cleanCorrect));
-    
-    if (matchIndex === -1 && !/^[A-D]$/i.test(correctAnswer)) {
-      return null; // Correct answer not in options
-    }
+    const labelMatch = correctAnswer.match(/^([A-D])$/i);
+    const matchIndex = labelMatch
+      ? labelMatch[1].toUpperCase().charCodeAt(0) - 65
+      : cleanOpts.findIndex((option) => option.toLowerCase() === cleanCorrect ||
+          (cleanCorrect.length > 3 && cleanCorrect.includes(option.toLowerCase())) ||
+          (option.toLowerCase().length > 3 && option.toLowerCase().includes(cleanCorrect)));
+    if (matchIndex < 0 || matchIndex > 3) return null;
+    if (!hasMeaningfulSourceOverlap(cleanOpts[matchIndex], evidenceQuote, 1)) return null;
 
-    // Standardize options with clean A, B, C, D labels
-    options = [
-      `A. ${cleanOpts[0]}`,
-      `B. ${cleanOpts[1]}`,
-      `C. ${cleanOpts[2]}`,
-      `D. ${cleanOpts[3]}`,
-    ];
-
-    const finalCorrectIndex = matchIndex >= 0 ? matchIndex : 0;
-    correctAnswer = options[finalCorrectIndex];
+    options = ['A. ' + cleanOpts[0], 'B. ' + cleanOpts[1], 'C. ' + cleanOpts[2], 'D. ' + cleanOpts[3]];
+    correctAnswer = options[matchIndex];
   } else if (type === 'true_false') {
     options = ['True', 'False'];
-    const norm = correctAnswer.toLowerCase();
-    correctAnswer = norm.includes('false') ? 'False' : 'True';
+    const normalizedAnswer = correctAnswer.toLowerCase();
+    if (normalizedAnswer !== 'true' && normalizedAnswer !== 'false') return null;
+    correctAnswer = normalizedAnswer === 'false' ? 'False' : 'True';
   } else {
-    // Fill in blank, short answer, or short essay
-    if (!correctAnswer || correctAnswer.length < 2) {
-      return null;
-    }
-    if (isCrossDomainContaminated(correctAnswer, combinedSourceLower)) {
-      return null;
-    }
+    if (!correctAnswer || correctAnswer.length < 2) return null;
+    if (isCrossDomainContaminated(correctAnswer, combinedSourceLower)) return null;
+    if (!hasMeaningfulSourceOverlap(correctAnswer, evidenceQuote, 1)) return null;
   }
 
   return {
-    id: q.id || `q_val_${Date.now()}_${batchIndex}_${idx + 1}`,
+    id: q.id || ('q_val_' + Date.now() + '_' + batchIndex + '_' + (idx + 1)),
     type,
     difficulty: q.difficulty || 'medium',
     allocatedMarks: q.allocatedMarks || (type === 'short_essay' ? 5 : type === 'short_answer' ? 3 : 2),
@@ -191,27 +212,24 @@ export function validateAndNormalizeQuestion(
     questionStyle: q.questionStyle || (type === 'multiple_choice' ? 'Concept Verification' : 'Analytical Assessment'),
     options,
     correctAnswer,
-    explanation: q.explanation || `Grounded in ${primaryChunk.filename} (Page/Slide ${primaryChunk.pageOrSlide}): "${primaryChunk.sourceExcerpt}".`,
-    markingPoints: q.markingPoints || (type === 'short_essay' ? ['Defines core concept accurately [2 marks]', 'Explains functional mechanism [2 marks]', 'States significance [1 mark]'] : undefined),
+    explanation: q.explanation || ('Grounded in ' + primaryChunk.filename + ' (Page/Slide ' + primaryChunk.pageOrSlide + '): "' + primaryChunk.sourceExcerpt + '".'),
+    markingPoints: q.markingPoints || (type === 'short_essay' ? ['Defines core concept accurately [2 marks]', 'Explains a source-supported detail [2 marks]', 'Uses accurate terminology [1 mark]'] : undefined),
     sampleAnswer: q.sampleAnswer || correctAnswer,
     acceptableAnswers: q.acceptableAnswers || [correctAnswer],
     isVerifiedFromNotes: true,
-    verificationNote: `Verified in ${primaryChunk.filename} (Page/Slide ${primaryChunk.pageOrSlide})`,
-    citations: [
-      {
-        chunkId: primaryChunk.chunkId,
-        documentId: primaryChunk.documentId,
-        filename: primaryChunk.filename,
-        courseId: primaryChunk.courseId,
-        folderId: primaryChunk.folderId,
-        pageOrSlide: primaryChunk.pageOrSlide,
-        sourceExcerpt: primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220),
-        relevanceScore: 0.96,
-      },
-    ],
+    verificationNote: 'Verified in ' + primaryChunk.filename + ' (Page/Slide ' + primaryChunk.pageOrSlide + ')',
+    citations: [{
+      chunkId: primaryChunk.chunkId,
+      documentId: primaryChunk.documentId,
+      filename: primaryChunk.filename,
+      courseId: primaryChunk.courseId,
+      folderId: primaryChunk.folderId,
+      pageOrSlide: primaryChunk.pageOrSlide,
+      sourceExcerpt: primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220),
+      relevanceScore: 0.96,
+    }],
   };
 }
-
 const QUESTION_COMPARISON_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'being', 'based', 'by', 'can',
   'could', 'describe', 'describes', 'did', 'do', 'does', 'explain', 'for', 'from',
