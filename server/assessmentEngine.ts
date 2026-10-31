@@ -516,11 +516,8 @@ ${answerContext}`;
     try {
       const contextText = chunkBatch
         .slice(0, 10)
-        .map(
-          (c, i) =>
-            `[Source Document ${i + 1}: ${c.filename}, Page/Slide ${c.pageOrSlide}]\n${c.text}`
-        )
-        .join('\n\n');
+        .map((c, i) => `[COURSE PASSAGE ${i + 1}]\n${c.text}`)
+        .join('\n\n---\n\n');
 
       const typesList =
         questionTypes && questionTypes.length > 0
@@ -531,46 +528,67 @@ ${answerContext}`;
         ? priorQuestionTexts.map((question, index) => `${index + 1}. ${question}`).join('\n')
         : '(No questions generated yet.)';
 
-      let prompt = `You are a university academic examiner. Generate EXACTLY ${batchSize} rigorous assessment questions based STRICTLY on the substantive educational concepts in the provided course excerpts.
+      let prompt = `You are an experienced university examiner writing a fair, natural exam paper for students.
 
-CRITICAL SUBJECT RELEVANCE & GROUNDING RULES:
-1. ONLY USE THE PROVIDED TEXT: All tested concepts, principles, and correct answers must be verifiably stated in the Course Excerpts below.
-2. STRICT SUBJECT ISOLATION: For multiple-choice questions, ALL 3 distractors MUST belong to the SAME academic domain as the source material (e.g. if the material is Psychology, all options must be psychology concepts; NEVER include unrelated machine learning, engineering, or biology terms).
-3. EXACTLY 4 OPTIONS: Multiple choice questions MUST have exactly 4 answer options: A, B, C, and D, with exactly one defensibly correct answer.
-4. NO META-PHRASES: Do NOT begin questions with "According to the document...", "According to the module...", or "Based on slide...". Start directly with "What is...", "Explain...", "Which of the following describes...", etc.
-5. NO METADATA: Do not ask questions about document filenames, slide numbers, authors, or copyright notices.
+SOURCE PRIORITY:
+- The uploaded course passages are the ONLY authority for facts, concepts, definitions, explanations, and correct answers.
+- Uploaded past papers are STYLE REFERENCES ONLY. Use them to match exam structure, wording level, section style, question types, and mark allocation. Never copy their subject matter unless it is also present in the course passages.
+- Do not use outside knowledge to fill gaps. If the course passages cannot support a clear answer, do not create that question.
 
-Target Difficulty: ${difficulty}.
-Allowed Question Types: ${typesList}.
-Style focus: ${questionStyle || 'balanced exam mix'}.
+QUESTION QUALITY RULES:
+1. Write each question in natural, grammatically correct academic English. It must sound like a real lecturer or examiner wrote it.
+2. Ask about a specific concept, definition, process, purpose, comparison, cause, effect, or principle that is clearly covered in the course passages.
+3. Make every question standalone, precise, unambiguous, and answerable from the supplied course passages. Avoid vague wording such as "discuss the topic" or "explain what is mentioned".
+4. Do NOT refer to the uploaded document, file, notes, slides, page, filename, or source in the question. Never write phrases such as "According to the document", "According to the notes", "Based on the uploaded file", or "As stated in the slides".
+5. Academic attribution is allowed when it is part of the subject itself (for example, "What did behaviorists argue?"). Do not remove or avoid the names of theories, scholars, or schools of thought.
+6. Test one clear learning point per question. Do not add unsupported requests for significance, advantages, disadvantages, applications, or implications unless those points appear in the course passages.
+7. Keep question wording concise. Do not combine several unrelated tasks in one question.
+8. For multiple-choice questions, provide exactly four distinct options and exactly one defensibly correct answer. Every option must be a real concept, fact, or position found in the course passages. Distractors must be plausible and from the same subject area. Never invent filler distractors or unrelated terminology.
+9. For true/false questions, write a clear factual statement. Do not alter a source statement into a false statement unless the supplied passages clearly establish the contradiction.
+10. For short-answer and essay questions, keep the requested answer proportional to the marks and the evidence available. Do not ask for a long discussion when the passages support only a short answer.
+11. Do not repeat, lightly reword, or test the same fact as a previously generated question.
 
-PREVIOUSLY GENERATED QUESTIONS — DO NOT REPEAT OR PARAPHRASE THESE:
+GROUNDING REQUIREMENT:
+- Every question must include an "evidenceQuote" copied verbatim from one course passage. The quote must be a complete, relevant sentence or clause that directly supports the question and its correct answer.
+- Set "citationIndex" to the zero-based course-passage number containing that exact quote.
+- Make the question and answer directly answerable from that quote. Do not use a quote that merely mentions the topic without supporting the answer.
+
+TARGETS:
+- Generate at most ${batchSize} high-quality questions in this batch. Return fewer rather than creating weak, repetitive, ambiguous, or unsupported questions.
+- Target difficulty: ${difficulty}.
+- Allowed question types: ${typesList}.
+- Style focus: ${questionStyle || 'balanced exam mix'}.
+
+PREVIOUSLY GENERATED QUESTIONS — DO NOT REPEAT OR PARAPHRASE:
 ${previousQuestionNotes}
 
-${styleNotes ? `${styleNotes}\n\n` : ''}
-COURSE EXCERPTS:
+${styleNotes ? styleNotes + '\\n\\nRemember: past-paper examples guide structure and wording only; do not copy their facts or topics unless those facts also appear in the course passages.\\n\\n' : ''}
+COURSE PASSAGES:
 ${contextText}
 
-OUTPUT FORMAT: Return ONLY a valid JSON array of ${batchSize} objects:
-[
-  {
-    "id": "q_${Date.now()}_1",
-    "type": "multiple_choice | true_false | fill_in_blank | short_answer | short_essay",
-    "difficulty": "${difficulty}",
-    "allocatedMarks": 2,
-    "question": "Direct exam question (e.g. What is...)",
-    "topic": "Core topic name from text",
-    "questionStyle": "Concept Verification",
-    "options": ["A. Option 1", "B. Option 2", "C. Option 3", "D. Option 4"],
-    "correctAnswer": "A. Option 1",
-    "explanation": "Clear explanation citing the source text passage",
-    "markingPoints": ["Key point 1", "Key point 2"],
-    "sampleAnswer": "Model solution",
-    "acceptableAnswers": ["Synonym 1"],
-    "isVerifiedFromNotes": true,
-    "citationIndex": 0
-  }
-]`;
+OUTPUT:
+Return ONLY a valid JSON array. Each object must use this schema:
+{
+  "id": "unique question id",
+  "type": "multiple_choice | true_false | fill_in_blank | short_answer | short_essay",
+  "difficulty": "${difficulty}",
+  "allocatedMarks": 2,
+  "question": "A natural, direct exam question",
+  "topic": "A specific topic from the course passages",
+  "questionStyle": "A concise exam-style label",
+  "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+  "correctAnswer": "The exact correct option, answer, or True/False",
+  "explanation": "A short explanation of why the answer is correct",
+  "markingPoints": ["Specific evidence-based marking point"],
+  "sampleAnswer": "A concise model answer",
+  "acceptableAnswers": ["A valid equivalent answer"],
+  "evidenceQuote": "An exact complete sentence or clause copied from a course passage",
+  "isVerifiedFromNotes": true,
+  "citationIndex": 0
+}
+
+Return a JSON array with no markdown fences and no commentary.`;
+
 
       const responseText = await generateGroundedContent({
         prompt,
@@ -760,16 +778,9 @@ export function generateDomainGroundedQuestions(
         if (distractors.length >= 3) break;
       }
 
-      // If document has fewer than 3 other predicates, generate domain-grounded plausible contrastive options
-      if (distractors.length < 1) {
-        distractors.push(`It operates inversely to ${fact.concept}, suppressing its typical function.`);
-      }
-      if (distractors.length < 2) {
-        distractors.push(`It is restricted exclusively to peripheral conditions without direct involvement in ${fact.concept}.`);
-      }
-      if (distractors.length < 3) {
-        distractors.push(`It represents an obsolete hypothesis superseded by empirical findings related to ${fact.concept}.`);
-      }
+      // Never invent generic distractors just to complete an MCQ.
+      // If the notes do not contain three distinct alternatives, skip this MCQ.
+      if (distractors.length < 3) continue;
 
       // Assemble 4 options and shuffle deterministically
       const rawChoices = [correctText, distractors[0], distractors[1], distractors[2]];
@@ -816,20 +827,16 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else if (type === 'true_false') {
-      const isTrue = sequenceIndex % 2 === 0;
-      let statement = fact.fullSentence;
-
-      if (!isTrue) {
-        // Negate statement using domain terms
-        statement = statement.replace(/\b(is|was|are|were|has|have|acts|operates)\b/i, '$1 not');
-      }
+      // Keep the source statement intact; do not create unsupported false claims.
+      const isTrue = true;
+      const statement = fact.fullSentence.replace(/[.!?]+$/, '');
 
       q = {
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'true_false',
         difficulty,
         allocatedMarks: 1,
-        question: `True or False: ${statement}.`,
+        question: `True or False: ${statement}?`,
         topic: fact.concept,
         questionStyle: mode === 'past_paper' ? 'Exam True/False' : 'Fact Validation',
         options: ['True', 'False'],
@@ -853,16 +860,14 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else if (type === 'fill_in_blank') {
-      const words = fact.concept.split(/\s+/).filter((w) => w.length > 3);
-      const targetWord = words[words.length - 1] || fact.concept;
-      const blankSentence = fact.fullSentence.replace(new RegExp(`\\b${targetWord}\\b`, 'i'), '__________');
+      const targetWord = fact.concept;
 
       q = {
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'fill_in_blank',
         difficulty,
         allocatedMarks: 2,
-        question: `Complete the following statement: ${blankSentence}`,
+        question: `What concept is described by this statement: ${fact.predicate}?`,
         topic: fact.concept,
         questionStyle: 'Cloze Deletion',
         correctAnswer: targetWord,
@@ -890,17 +895,16 @@ export function generateDomainGroundedQuestions(
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'short_essay',
         difficulty,
-        allocatedMarks: 5,
-        question: `Explain the fundamental principles and significance of ${fact.concept}. Discuss how it operates in the context of the course material.`,
+        allocatedMarks: 3,
+        question: `Explain ${fact.concept} and describe its main features.`,
         topic: fact.concept,
         questionStyle: mode === 'past_paper' ? 'Past Paper Essay Prompt' : 'Explanations & Mechanisms',
         correctAnswer: fact.fullSentence,
         markingPoints: [
-          `Accurately defines ${fact.concept} [2 marks].`,
-          'Explains the primary mechanism, methodology, or context [2 marks].',
-          'Discusses broader implications or significance [1 mark].',
+          `Explains the main idea of ${fact.concept} [2 marks].`,
+          'Includes one relevant supporting detail from the course content [1 mark].',
         ],
-        sampleAnswer: `The material establishes that ${fact.fullSentence}. This principle provides a foundational framework for understanding the underlying phenomena within the discipline.`,
+        sampleAnswer: fact.fullSentence,
         explanation: `Comprehensive analysis grounded in ${chunk.filename} (Page/Slide ${chunk.pageOrSlide}): "${fact.fullSentence}".`,
         isVerifiedFromNotes: true,
         verificationNote: `Verified in ${chunk.filename} (Page/Slide ${chunk.pageOrSlide})`,
@@ -920,14 +924,24 @@ export function generateDomainGroundedQuestions(
         ],
       };
     } else {
+      const predicateLower = fact.predicate.toLowerCase();
+      let shortQuestion = `What is ${fact.concept}?`;
+      if (predicateLower.includes('aimed to')) shortQuestion = `What was the main aim of ${fact.concept}?`;
+      else if (predicateLower.includes('investigated')) shortQuestion = `What did ${fact.concept} investigate?`;
+      else if (predicateLower.includes('argued that')) shortQuestion = `What did ${fact.concept} argue?`;
+      else if (predicateLower.includes('established')) shortQuestion = `What did ${fact.concept} establish?`;
+      else if (predicateLower.includes('consists of')) shortQuestion = `What does ${fact.concept} consist of?`;
+      else if (predicateLower.includes('emerged to')) shortQuestion = `What did ${fact.concept} emerge to explore?`;
+      else if (predicateLower.includes('developed by') || predicateLower.includes('pioneered by')) shortQuestion = `Who developed ${fact.concept}?`;
+
       q = {
         id: `q_dom_${Date.now()}_${i + 1}`,
         type: 'short_answer',
         difficulty,
         allocatedMarks: 3,
-        question: `What is ${fact.concept}, and what is its primary definition or function?`,
+        question: shortQuestion,
         topic: fact.concept,
-        questionStyle: mode === 'past_paper' ? 'Past Paper Short Answer' : 'Definitions & Facts',
+        questionStyle: mode === 'past_paper' ? 'Past Paper Short Answer' : 'Direct Recall',
         correctAnswer: fact.predicate.slice(0, 120),
         markingPoints: [
           `States precise definition of ${fact.concept} [2 marks].`,
