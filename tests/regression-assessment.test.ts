@@ -180,7 +180,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
         'C. Scope resolution operator',
         'D. Conditional operator',
         'Question 2: Explain the purpose of a function in C++ (5 marks)',
-    ].join('\n');
+      ].join('\n'),
       'C++_2025_exam.txt'
     );
 
@@ -218,7 +218,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
       'A. Study of mind and behaviour',
       'B. Study of rocks',
       'Question 2: Explain structuralism.',
-    ].join('\\n');
+    ].join('\n');
     const normalized = normalizeAIExtractedPastPaperQuestions([
       {
         questionNumber: '1',
