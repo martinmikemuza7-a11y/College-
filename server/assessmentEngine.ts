@@ -278,6 +278,46 @@ export function calculateQuestionBatchSize(targetCount: number, alreadyGenerated
   return Math.min(5, Math.max(0, normalizedTarget - normalizedGenerated));
 }
 
+export function buildActualPastPaperAnswerPrompt(
+  answerTasks: Array<{
+    index: number;
+    question: string;
+    type: QuestionType;
+    marks: number;
+    options: string[];
+    paperTitle: string;
+  }>,
+  answerContext: string
+): string {
+  const hasCourseNotes = Boolean(answerContext.trim());
+  const sourceInstructions = hasCourseNotes
+    ? `Use the supplied course-note passages FIRST. When a passage directly supports an answer, use it and include an exact evidenceQuote copied from that passage plus its citationIndex. If the notes do not contain enough information for a particular question, you MAY answer using reliable general academic knowledge and careful subject reasoning. For those answers set answerSource to "general_knowledge", leave evidenceQuote empty, and clearly state that the answer was not verified against the uploaded notes. Never invent a note citation.`
+    : `No course notes are available. Answer each original past-paper question using reliable general academic knowledge and careful subject reasoning. You may solve, calculate, explain, or infer the answer from the question and its original options. Do not pretend that an uploaded note supports the answer and do not fabricate citations. If the question is ambiguous, outside your reliable knowledge, or cannot be solved from the information given, set canAnswer to false and say that a reliable answer could not be determined.`;
+
+  return `You are an experienced university tutor preparing model answers for actual questions extracted from an uploaded past examination paper. Preserve every question exactly as supplied; do not rewrite or replace the questions.
+
+${sourceInstructions}
+
+For every question:
+- Give a correct, concise model answer appropriate to the allocated marks.
+- For calculations, show the essential formula, substitution, and result. For conceptual questions, explain the central idea clearly.
+- Give a short educational explanation, not hidden internal chain-of-thought.
+- Provide marking points and acceptable answer variants where useful.
+- For multiple-choice questions, select ONLY one of the original options supplied. Return its letter and exact option text.
+- Set answerSource to "course_notes" only when you provide an exact evidenceQuote that appears in the supplied notes; otherwise use "general_knowledge".
+- Set confidence to "high", "medium", or "low". Never describe an uncertain answer as certain.
+- Return canAnswer as a boolean.
+
+Return valid JSON only, as an array of objects with these fields:
+index, answer, explanation, markingPoints, acceptableAnswers, answerSource, evidenceQuote, citationIndex, confidence, canAnswer.
+
+ACTUAL QUESTIONS (preserve these exact prompts in the application):
+${JSON.stringify(answerTasks, null, 2)}
+
+COURSE NOTES (may be empty):
+${answerContext || '[No course notes uploaded or selected.]'}`;
+}
+
 export async function generateQuizQuestions(options: GenerateQuizOptions): Promise<GeneratedQuizBatch> {
   const {
     courseId,
@@ -364,7 +404,7 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     }
 
     // If still no chunks, THROW ERROR instead of falling back to other course materials!
-    if (rawChunks.length === 0) {
+    if (rawChunks.length === 0 && mode !== 'actual_past_paper') {
       throw new Error(
         'The selected document does not contain sufficient educational text passages to generate grounded examination questions. Please upload substantive lecture notes, slides, or documents.'
       );
@@ -398,7 +438,7 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
 
   // Verify substantive educational content exists
   const totalSubstantiveLength = chunks.reduce((acc, c) => acc + c.text.length, 0);
-  if (chunks.length === 0 || totalSubstantiveLength < 40) {
+  if ((chunks.length === 0 || totalSubstantiveLength < 40) && mode !== 'actual_past_paper') {
     throw new Error(
       'The selected learning material contains insufficient substantive educational content (e.g. only document titles or metadata were detected). Please upload notes or lecture slides with detailed concepts and definitions.'
     );
@@ -430,27 +470,23 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     }
 
     const answerContext = chunks.slice(0, 18).map((chunk, index) =>
-      `[Course source ${index + 1}: ${chunk.filename}, page/slide ${chunk.pageOrSlide}]\n${chunk.text}`
-    ).join('\n\n---\n\n');
+      `[Course source ${index + 1}: ${chunk.filename}, page/slide ${chunk.pageOrSlide}]\\n${chunk.text}`
+    ).join('\\n\\n---\\n\\n');
     const answerTasks = batchItems.map(({ paper, item }, index) => ({
       index, question: item.prompt, type: item.type, marks: item.allocatedMarks || 2,
       options: item.options || [], paperTitle: paper.title || paper.filename,
     }));
-    const answerPrompt = `You are answering actual questions extracted from uploaded university past papers. Do not rewrite, paraphrase, shorten, or replace the questions. Produce answers only.
-
-Use ONLY the course-note passages below for factual claims. For each question, return a concise model answer appropriate to its marks, a brief explanation, marking points, and acceptable answer variants. If the passages do not support an answer, use exactly: "The uploaded course documents do not contain sufficient evidence to answer this question." Do not invent missing facts. For multiple-choice questions, choose from the provided original options if present and return the option label and text as the answer. Return valid JSON only, as an array of objects with index, answer, explanation, markingPoints, and acceptableAnswers.
-
-ACTUAL QUESTIONS (keep these prompts unchanged in the app):
-${JSON.stringify(answerTasks, null, 2)}
-
-COURSE NOTES:
-${answerContext}`;
+    const answerPrompt = buildActualPastPaperAnswerPrompt(answerTasks, answerContext);
 
     let answerRows: any[] = [];
     const ai = getGenAI();
-    if (ai && answerContext.length > 0) {
+    if (ai) {
       try {
-        const responseText = await generateGroundedContent({ prompt: answerPrompt, responseMimeType: 'application/json', temperature: 0.1 });
+        const responseText = await generateGroundedContent({
+          prompt: answerPrompt,
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        });
         if (responseText) {
           const parsed = JSON.parse(responseText.trim());
           if (Array.isArray(parsed)) answerRows = parsed;
@@ -460,29 +496,78 @@ ${answerContext}`;
       }
     }
 
-    const insufficient = 'The uploaded course documents do not contain sufficient evidence to answer this question.';
+    const noReliableAnswer = 'I could not determine a reliable answer for this question. Please check it against your course materials or ask your lecturer.';
+    const unavailableReason = ai
+      ? noReliableAnswer
+      : 'AI answering is unavailable because GEMINI_API_KEY is not configured. Add it as a server-side secret to generate answers.';
+
     const questions: QuizQuestion[] = batchItems.map(({ paper, item }, index) => {
       const answer = answerRows.find((row) => Number(row.index) === index) || {};
-      const answerText = String(answer.answer || insufficient).trim();
-      const promptTokens = item.prompt.toLowerCase().split(/\W+/).filter((token) => token.length > 4);
-      const primaryChunk = chunks.find((chunk) => promptTokens.some((token) => chunk.text.toLowerCase().includes(token))) || chunks[0];
-      const citations = primaryChunk ? [{
+      const rawAnswerText = String(answer.answer || '').trim();
+      const answerCouldNotBeGenerated = !rawAnswerText || answer.canAnswer === false ||
+        answer.cannotAnswer === true || /^i could not determine a reliable answer/i.test(rawAnswerText);
+      let answerText = answerCouldNotBeGenerated ? unavailableReason : rawAnswerText;
+
+      // A note citation is created only when the model returns a verbatim quote
+      // that can be found in a real selected course chunk.
+      const evidenceQuote = String(answer.evidenceQuote || '').trim();
+      const normalizedQuote = normalizeEvidenceText(evidenceQuote);
+      const evidenceChunk = normalizedQuote.length >= 20
+        ? chunks.find((chunk) => normalizeEvidenceText(chunk.text || '').includes(normalizedQuote))
+        : undefined;
+      let primaryChunk = evidenceChunk;
+
+      // When the paper includes MCQ choices, reject answers that are not one
+      // of those original choices instead of silently inventing an option.
+      if (!answerCouldNotBeGenerated && item.type === 'multiple_choice' && item.options?.length) {
+        const labelMatch = answerText.match(/^([A-F])(?:[.)\\s:]|$)/i);
+        const normalizedAnswer = normalizeEvidenceText(answerText.replace(/^[A-F][.)\\s:]*/i, ''));
+        const optionIndex = labelMatch
+          ? labelMatch[1].toUpperCase().charCodeAt(0) - 65
+          : item.options.findIndex((option) => {
+              const normalizedOption = normalizeEvidenceText(option);
+              return normalizedOption === normalizedAnswer ||
+                (normalizedAnswer.length > 0 && normalizedAnswer.includes(normalizedOption));
+            });
+        if (optionIndex < 0 || optionIndex >= item.options.length) {
+          answerText = noReliableAnswer;
+          primaryChunk = undefined;
+        } else {
+          answerText = `${String.fromCharCode(65 + optionIndex)}. ${item.options[optionIndex]}`;
+        }
+      }
+
+      const isVerifiedFromNotes = Boolean(primaryChunk && answerText !== noReliableAnswer && !answerCouldNotBeGenerated);
+      const answerSourceNote = answerText === noReliableAnswer || answerText === unavailableReason
+        ? answerText
+        : isVerifiedFromNotes
+          ? `Answer supported by ${primaryChunk!.filename} (Page/Slide ${primaryChunk!.pageOrSlide}).`
+          : 'No matching course-note evidence was verified. This model answer uses general academic knowledge and AI reasoning; compare it with your lecturer’s materials.';
+      const citations = primaryChunk && isVerifiedFromNotes ? [{
         chunkId: primaryChunk.chunkId, documentId: primaryChunk.documentId, filename: primaryChunk.filename,
         courseId: primaryChunk.courseId, folderId: primaryChunk.folderId, pageOrSlide: primaryChunk.pageOrSlide,
-        sourceExcerpt: primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220), relevanceScore: 0.8,
+        sourceExcerpt: evidenceQuote || primaryChunk.sourceExcerpt || primaryChunk.text.slice(0, 220), relevanceScore: 0.95,
       }] : [];
+      const modelExplanation = String(answer.explanation || '').trim();
+      const explanation = answerText === noReliableAnswer || answerText === unavailableReason
+        ? answerSourceNote
+        : `${modelExplanation || 'Model answer prepared for the original examination question.'} ${answerSourceNote}`;
+      const answerVariants = Array.isArray(answer.acceptableAnswers)
+        ? answer.acceptableAnswers.map(String).filter(Boolean)
+        : [answerText];
+
       return {
         id: `past_${paper.id}_${String(item.questionNumber || index + 1).replace(/[^a-z0-9_-]/gi, '_')}`,
         type: item.type, difficulty: 'medium', allocatedMarks: item.allocatedMarks || 2,
         question: item.prompt.trim(), topic: item.section || 'Past Paper',
         questionStyle: 'Original Past Paper Question', options: item.options?.map((option, optionIndex) => `${String.fromCharCode(65 + optionIndex)}. ${option}`),
         correctAnswer: answerText,
-        explanation: String(answer.explanation || (answerText === insufficient ? insufficient : 'Model answer prepared from the uploaded course notes.')),
+        explanation,
         markingPoints: Array.isArray(answer.markingPoints) ? answer.markingPoints.map(String) : undefined,
         sampleAnswer: answerText,
-        acceptableAnswers: Array.isArray(answer.acceptableAnswers) ? answer.acceptableAnswers.map(String) : [answerText],
-        citations, isVerifiedFromNotes: answerText !== insufficient,
-        verificationNote: answerText === insufficient ? insufficient : `Answer grounded in course notes; original prompt extracted from ${paper.title || paper.filename}.`,
+        acceptableAnswers: answerVariants,
+        citations, isVerifiedFromNotes,
+        verificationNote: answerSourceNote,
         mode: 'actual_past_paper', sourceExamTitle: paper.title || paper.filename,
         sourceQuestionNumber: item.questionNumber, sourceSection: item.section,
       };

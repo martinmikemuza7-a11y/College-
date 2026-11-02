@@ -10,9 +10,10 @@ import {
   isDuplicateQuestion,
   sanitizeQuestionText,
   validateAndNormalizeQuestion,
+  buildActualPastPaperAnswerPrompt,
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
-import { parsePastPaperText } from '../server/pastPaperProcessing.js';
+import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions } from '../server/pastPaperProcessing.js';
 
 // Initialize in-memory database
 initDb();
@@ -209,6 +210,67 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
       'not_a_paper.txt'
     );
     assert.strictEqual(unnumbered.questions.length, 0, 'Do not fabricate exam questions from ordinary paragraphs');
+  });
+
+  it('AI-assisted past-paper extraction accepts only question wording verified in the uploaded paper', () => {
+    const source = [
+      'Question 1: Define psychology.',
+      'A. Study of mind and behaviour',
+      'B. Study of rocks',
+      'Question 2: Explain structuralism.',
+    ].join('\n');
+    const normalized = normalizeAIExtractedPastPaperQuestions([
+      {
+        questionNumber: '1',
+        type: 'multiple_choice',
+        prompt: 'Define psychology.',
+        options: ['Study of mind and behaviour', 'Study of rocks'],
+        sourceQuote: 'Question 1: Define psychology. A. Study of mind and behaviour B. Study of rocks',
+        allocatedMarks: 2,
+      },
+      {
+        questionNumber: '3',
+        type: 'short_answer',
+        prompt: 'Explain quantum teleportation.',
+        sourceQuote: 'Explain quantum teleportation.',
+      },
+    ], source);
+
+    assert.strictEqual(normalized.length, 1, 'Invented prompts must be discarded');
+    assert.strictEqual(normalized[0].prompt, 'Define psychology.');
+    assert.deepStrictEqual(normalized[0].options, ['Study of mind and behaviour', 'Study of rocks']);
+    assert.strictEqual(normalized[0].type, 'multiple_choice');
+  });
+
+  it('Actual past-paper answer prompt allows reasoning when notes are unavailable', () => {
+    const prompt = buildActualPastPaperAnswerPrompt([{
+      index: 0,
+      question: 'Explain the purpose of a function in C++.',
+      type: 'short_essay',
+      marks: 5,
+      options: [],
+      paperTitle: 'C++ examination',
+    }], '');
+
+    assert.match(prompt, /No course notes are available/);
+    assert.match(prompt, /general academic knowledge and careful subject reasoning/);
+    assert.match(prompt, /Do not pretend that an uploaded note supports the answer/);
+    assert.match(prompt, /canAnswer/);
+  });
+
+  it('Actual past-paper answer prompt prioritizes notes but permits clearly labelled reasoning when they do not cover a question', () => {
+    const prompt = buildActualPastPaperAnswerPrompt([{
+      index: 0,
+      question: 'Explain the purpose of a function in C++.',
+      type: 'short_essay',
+      marks: 5,
+      options: [],
+      paperTitle: 'C++ examination',
+    }], 'A function groups statements to perform a reusable task.');
+
+    assert.match(prompt, /course-note passages FIRST/);
+    assert.match(prompt, /answer using reliable general academic knowledge/);
+    assert.match(prompt, /Never invent a note citation/);
   });
 
   it('Metadata Sanitizer: Strips copyright, timestamps, file paths, and templates', () => {

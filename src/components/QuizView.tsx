@@ -1399,7 +1399,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
                         <div className="flex items-center justify-between pb-2 border-b border-slate-200 text-xs">
                           <span className="font-bold text-slate-900 flex items-center gap-1.5">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            Official Answer Key & Marking Guide
+                            {q.mode === 'actual_past_paper' && q.isVerifiedFromNotes === false
+                              ? 'AI Model Answer & Marking Guide'
+                              : 'Official Answer Key & Marking Guide'}
                           </span>
 
                           {/* Verification flag */}
@@ -1411,7 +1413,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                           ) : (
                             <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold flex items-center gap-1">
                               <AlertTriangle className="w-3 h-3" />
-                              ⚠️ Unverified against course notes
+                              ⚠️ AI reasoning — not verified from course notes
                             </span>
                           )}
                         </div>
@@ -1419,7 +1421,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                         {/* Verified Correct Answer Box */}
                         <div className="p-3 rounded-xl bg-white border border-emerald-200 space-y-1 text-xs">
                           <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">
-                            Verified Correct Answer
+                            {q.isVerifiedFromNotes === false ? 'AI Suggested Answer (check against your course)' : 'Verified Correct Answer'}
                           </span>
                           <div className="font-bold text-slate-900 text-sm">
                             {q.correctAnswer}

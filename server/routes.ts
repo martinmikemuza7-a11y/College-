@@ -669,7 +669,9 @@ router.post('/past-papers/upload', async (req, res) => {
       extractedTextLength: processed.text.length,
       extractedQuestions: processed.questions,
       status: 'ready',
-      statusMessage: `Parsed ${processed.questions.length} questions`,
+      statusMessage: processed.questions.length > 0
+        ? `Extracted ${processed.questions.length} original examination questions`
+        : 'The file was read, but no question structures were confidently identified. Check the scan quality or upload a clearer copy.',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
