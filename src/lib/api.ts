@@ -347,7 +347,7 @@ export const api = {
     }
 
     const lower = file.name.toLowerCase();
-    const isTextFile = lower.endsWith('.txt') || lower.endsWith('.md');
+    const isTextFile = lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.markdown');
 
     let bodyData: any;
     if (isTextFile) {
