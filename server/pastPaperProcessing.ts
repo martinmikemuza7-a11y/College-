@@ -372,12 +372,11 @@ function finalizeQuestion(q: Partial<PastPaperQuestionStructure>): PastPaperQues
     }
   }
 
-  const markFreePrompt = cleanPrompt.replace(/\s*[[(]\d+\s*(?:marks?|pts?)\s*[)\]]\s*$/i, '').trim();
   return {
     questionNumber: q.questionNumber || '1',
     section: q.section || 'General Questions',
     type,
-    prompt: markFreePrompt,
+    prompt: cleanPrompt,
     options,
     allocatedMarks: allocatedMarks || (type === 'short_essay' ? 5 : 2),
     markingGuide: 'Award marks for a correct answer that addresses the original examination prompt.',
