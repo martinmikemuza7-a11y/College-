@@ -213,7 +213,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
   });
 
   it('AI-assisted past-paper extraction accepts only question wording verified in the uploaded paper', () => {
-    const source = 'Question 1: Define psychology.\\nA. Study of mind and behaviour\\nB. Study of rocks\\nQuestion 2: Explain structuralism.';
+    const source = 'Question 1: Define psychology.\nA. Study of mind and behaviour\nB. Study of rocks\nQuestion 2: Explain structuralism.';
     const normalized = normalizeAIExtractedPastPaperQuestions([
       {
         questionNumber: '1',
