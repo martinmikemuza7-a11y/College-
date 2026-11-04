@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { isSubstantiveEducationalContent, sanitizeEducationalContent } from './materialProcessing.js';
 import { QuestionType, QuizQuestion } from './types.js';
 import { retrieveChunks } from './vectorRag.js';
+import { UNIVERSAL_PAST_PAPER_ANSWER_POLICY } from './pastPaperAnswerInstructions.js';
 
 export interface GenerateQuizOptions {
   courseId: string;
@@ -473,7 +474,8 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
       `[Course source ${index + 1}: ${chunk.filename}, page/slide ${chunk.pageOrSlide}]\\n${chunk.text}`
     ).join('\\n\\n---\\n\\n');
     const answerTasks = batchItems.map(({ paper, item }, index) => ({
-      index, question: item.prompt, type: item.type, marks: item.allocatedMarks || 2,
+      index, question: item.prompt, questionNumber: item.questionNumber, section: item.section,
+      sourcePage: item.sourcePage, type: item.type, marks: item.allocatedMarks || 2,
       options: item.options || [], paperTitle: paper.title || paper.filename,
     }));
     const answerPrompt = buildActualPastPaperAnswerPrompt(answerTasks, answerContext);
