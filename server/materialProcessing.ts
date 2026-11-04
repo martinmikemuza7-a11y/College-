@@ -74,9 +74,9 @@ export async function extractContent(
           pageCount = parsed.total || parsed.pages.length || 1;
           for (const p of parsed.pages) {
             const pText = (p.text || '').trim();
-            if (pText.length > 10) {
-              segments.push({ text: pText, pageOrSlide: p.num || 1 });
-            }
+            // Retain empty/short pages too: downstream past-paper processing
+            // can then tell the user which pages may need a clearer scan.
+            segments.push({ text: pText, pageOrSlide: p.num || segments.length + 1 });
           }
         }
       } catch (pdfErr) {
@@ -116,7 +116,13 @@ export async function extractContent(
 
           const ocrText = response.text || '';
           if (ocrText.trim().length > 20) {
-            return parseTextIntoSegments(ocrText);
+            const ocrExtracted = parseTextIntoSegments(ocrText);
+            // Preserve the PDF parser's physical page count even if OCR omits
+            // an unreadable page or fails to emit a [Page N] marker for it.
+            return {
+              ...ocrExtracted,
+              pageCount: Math.max(pageCount, ocrExtracted.pageCount),
+            };
           }
         } catch (ocrErr) {
           console.warn('[PDF OCR] Vision extraction failed:', ocrErr);

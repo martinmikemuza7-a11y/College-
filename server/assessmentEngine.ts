@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { isSubstantiveEducationalContent, sanitizeEducationalContent } from './materialProcessing.js';
 import { QuestionType, QuizQuestion } from './types.js';
 import { retrieveChunks } from './vectorRag.js';
+import { UNIVERSAL_PAST_PAPER_ANSWER_POLICY } from './pastPaperAnswerInstructions.js';
 
 export interface GenerateQuizOptions {
   courseId: string;
@@ -286,6 +287,9 @@ export function buildActualPastPaperAnswerPrompt(
     marks: number;
     options: string[];
     paperTitle: string;
+    questionNumber?: string;
+    section?: string;
+    sourcePage?: number;
   }>,
   answerContext: string
 ): string {
@@ -295,6 +299,9 @@ export function buildActualPastPaperAnswerPrompt(
     : `No course notes are available. Answer each original past-paper question using reliable general academic knowledge and careful subject reasoning. You may solve, calculate, explain, or infer the answer from the question and its original options. Do not pretend that an uploaded note supports the answer and do not fabricate citations. If the question is ambiguous, outside your reliable knowledge, or cannot be solved from the information given, set canAnswer to false and say that a reliable answer could not be determined.`;
 
   return `You are an experienced university tutor preparing model answers for actual questions extracted from an uploaded past examination paper. Preserve every question exactly as supplied; do not rewrite or replace the questions.
+
+UNIVERSAL PAST-PAPER POLICY:
+${UNIVERSAL_PAST_PAPER_ANSWER_POLICY}
 
 ${sourceInstructions}
 
@@ -473,7 +480,8 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
       `[Course source ${index + 1}: ${chunk.filename}, page/slide ${chunk.pageOrSlide}]\\n${chunk.text}`
     ).join('\\n\\n---\\n\\n');
     const answerTasks = batchItems.map(({ paper, item }, index) => ({
-      index, question: item.prompt, type: item.type, marks: item.allocatedMarks || 2,
+      index, question: item.prompt, questionNumber: item.questionNumber, section: item.section,
+      sourcePage: item.sourcePage, type: item.type, marks: item.allocatedMarks || 2,
       options: item.options || [], paperTitle: paper.title || paper.filename,
     }));
     const answerPrompt = buildActualPastPaperAnswerPrompt(answerTasks, answerContext);

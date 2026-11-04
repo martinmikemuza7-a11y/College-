@@ -13,7 +13,8 @@ import {
   buildActualPastPaperAnswerPrompt,
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
-import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions } from '../server/pastPaperProcessing.js';
+import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions, identifyPastPaperPagesNeedingReview } from '../server/pastPaperProcessing.js';
+import { UNIVERSAL_PAST_PAPER_ANSWER_POLICY } from '../server/pastPaperAnswerInstructions.js';
 
 // Initialize in-memory database
 initDb();
@@ -171,6 +172,37 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     }
   });
 
+
+  it('Universal past-paper answer prompt preserves complete-paper and answer-format requirements', () => {
+    const prompt = buildActualPastPaperAnswerPrompt([{
+      index: 0, question: 'Explain the concept of psychology.', questionNumber: '2(b)',
+      section: 'Section B', sourcePage: 3, type: 'short_essay', marks: 5,
+      options: [], paperTitle: 'Psychology Examination',
+    }], '');
+    assert.ok(prompt.includes(UNIVERSAL_PAST_PAPER_ANSWER_POLICY));
+    assert.ok(prompt.includes('questionNumber'));
+    assert.ok(prompt.includes('sourcePage'));
+    assert.ok(prompt.includes('No course notes are available'));
+    assert.ok(prompt.includes('Mathematics/statistics'));
+  });
+
+  it('Past-paper extraction flags pages with missing or very little readable text', () => {
+    assert.deepStrictEqual(
+      identifyPastPaperPagesNeedingReview([
+        { pageOrSlide: 1, text: 'Question 1: Define psychology and explain its scope.' },
+        { pageOrSlide: 3, text: '' },
+      ], 3),
+      [2, 3]
+    );
+    assert.deepStrictEqual(
+      identifyPastPaperPagesNeedingReview([
+        { pageOrSlide: 1, text: 'Question 1: Define psychology and explain its scope.' },
+        { pageOrSlide: 2, text: 'Question 2: Explain structuralism in psychology.' },
+      ], 2),
+      []
+    );
+  });
+
   it('Past-paper extraction preserves original question stems and MCQ options without inventing questions', () => {
     const extracted = parsePastPaperText(
       [
@@ -240,6 +272,25 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.strictEqual(normalized[0].prompt, 'Define psychology.');
     assert.deepStrictEqual(normalized[0].options, ['Study of mind and behaviour', 'Study of rocks']);
     assert.strictEqual(normalized[0].type, 'multiple_choice');
+  });
+
+  it('AI-assisted extraction assigns each question to the page containing its verified source quote', () => {
+    const source = [
+      '[Page 1]',
+      'Question 1: Define psychology and identify its main focus.',
+      '[Page 2]',
+      'Question 2: Explain structuralism and its role in early psychology.',
+    ].join('\n');
+    const extracted = normalizeAIExtractedPastPaperQuestions([
+      {
+        questionNumber: '2',
+        prompt: 'Explain structuralism and its role in early psychology.',
+        sourceQuote: 'Question 2: Explain structuralism and its role in early psychology.',
+      },
+    ], source);
+
+    assert.strictEqual(extracted.length, 1);
+    assert.strictEqual(extracted[0].sourcePage, 2);
   });
 
   it('Actual past-paper answer prompt allows reasoning when notes are unavailable', () => {
