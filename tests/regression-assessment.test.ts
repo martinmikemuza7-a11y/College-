@@ -280,7 +280,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
       'Question 1: Define psychology and identify its main focus.',
       '[Page 2]',
       'Question 2: Explain structuralism and its role in early psychology.',
-    ].join('\\n');
+    ].join('\n');
     const extracted = normalizeAIExtractedPastPaperQuestions([
       {
         questionNumber: '2',
