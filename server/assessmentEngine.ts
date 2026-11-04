@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { isSubstantiveEducationalContent, sanitizeEducationalContent } from './materialProcessing.js';
 import { QuestionType, QuizQuestion } from './types.js';
 import { retrieveChunks } from './vectorRag.js';
+import { UNIVERSAL_PAST_PAPER_ANSWER_POLICY } from './pastPaperAnswerInstructions.js';
 
 export interface GenerateQuizOptions {
   courseId: string;
@@ -278,10 +279,30 @@ export function calculateQuestionBatchSize(targetCount: number, alreadyGenerated
   return Math.min(5, Math.max(0, normalizedTarget - normalizedGenerated));
 }
 
+/**
+ * Returns one stable slice of the source paper's ordered question list.
+ * Unlike practice-question generation, this helper deliberately does not
+ * deduplicate: two identical-looking questions printed in different sections
+ * are still two separate examination items and must both be answered.
+ */
+export function selectPastPaperQuestionBatch<T>(
+  questions: T[],
+  batchIndex: number,
+  batchSize = 5,
+): T[] {
+  const safeIndex = Number.isFinite(batchIndex) ? Math.max(0, Math.floor(batchIndex)) : 0;
+  const safeSize = Number.isFinite(batchSize) ? Math.max(1, Math.floor(batchSize)) : 5;
+  const start = safeIndex * safeSize;
+  return questions.slice(start, start + safeSize);
+}
+
 export function buildActualPastPaperAnswerPrompt(
   answerTasks: Array<{
     index: number;
     question: string;
+    questionNumber?: string;
+    section?: string;
+    sourcePage?: number;
     type: QuestionType;
     marks: number;
     options: string[];
@@ -294,9 +315,20 @@ export function buildActualPastPaperAnswerPrompt(
     ? `Use the supplied course-note passages FIRST. When a passage directly supports an answer, use it and include an exact evidenceQuote copied from that passage plus its citationIndex. If the notes do not contain enough information for a particular question, you MAY answer using reliable general academic knowledge and careful subject reasoning. For those answers set answerSource to "general_knowledge", leave evidenceQuote empty, and clearly state that the answer was not verified against the uploaded notes. Never invent a note citation.`
     : `No course notes are available. Answer each original past-paper question using reliable general academic knowledge and careful subject reasoning. You may solve, calculate, explain, or infer the answer from the question and its original options. Do not pretend that an uploaded note supports the answer and do not fabricate citations. If the question is ambiguous, outside your reliable knowledge, or cannot be solved from the information given, set canAnswer to false and say that a reliable answer could not be determined.`;
 
-  return `You are an experienced university tutor preparing model answers for actual questions extracted from an uploaded past examination paper. Preserve every question exactly as supplied; do not rewrite or replace the questions.
+  return `${UNIVERSAL_PAST_PAPER_ANSWER_POLICY}
+
+You are an experienced university tutor preparing model answers for actual questions extracted from an uploaded past examination paper. Preserve every question exactly as supplied; do not rewrite or replace the questions.
 
 ${sourceInstructions}
+
+ADDITIONAL ANSWER FORMAT RULES:
+- Keep each answer tied to its original questionNumber, section, page, and paperTitle in the task data.
+- MCQ: return the exact letter and original option text; put the reason the option is correct in explanation.
+- True/false: give True or False, then a short justification in explanation.
+- Fill-in-the-blank and short-answer: give the direct answer first, then clarify any important term.
+- Short essay: structure the answer with a brief opening, clearly explained points, an appropriate example where useful, and a short conclusion. Match depth to marks.
+- Calculation questions: show the formula, substitution, arithmetic steps, units, and final answer in answer or explanation.
+- Do not combine separate sub-questions or drop any item from the JSON response.
 
 For every question:
 - Give a correct, concise model answer appropriate to the allocated marks.
@@ -351,7 +383,9 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     : [courseId];
 
   // 2. Fetch past papers in scope if in past_paper mode
-  let availablePastPapers = db.data.pastPapers.filter((p) => allowedCourseIds.includes(p.courseId));
+  let availablePastPapers = db.data.pastPapers.filter((p) =>
+    allowedCourseIds.includes(p.courseId) && (!ownerId || p.ownerId === ownerId)
+  );
   if (pastPaperIds && pastPaperIds.length > 0) {
     availablePastPapers = availablePastPapers.filter((p) => pastPaperIds.includes(p.id));
   }
@@ -446,8 +480,10 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
 
   // 4. Batch sizing: questionCount is the overall requested total; alreadyGeneratedCount
   // records how many unique questions have actually been accepted by the caller.
-  const batchSize = calculateQuestionBatchSize(targetQuestionCount, alreadyGeneratedCount);
-  if (batchSize === 0) {
+  const batchSize = mode === 'actual_past_paper'
+    ? 5
+    : calculateQuestionBatchSize(targetQuestionCount, alreadyGeneratedCount);
+  if (batchSize === 0 && mode !== 'actual_past_paper') {
     return { questions: [], totalGenerated: 0, requestedCount: targetQuestionCount, hasMore: false, batchIndex, mode };
   }
 
@@ -463,18 +499,25 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
         .filter((item) => typeof item.prompt === 'string' && item.prompt.trim().length > 0)
         .map((item) => ({ paper, item }))
     );
-    const actualOffset = batchIndex * 5;
-    const batchItems = extracted.slice(actualOffset, actualOffset + batchSize);
+    const batchItems = selectPastPaperQuestionBatch(extracted, batchIndex, batchSize);
+    const actualOffset = Math.max(0, Math.floor(batchIndex)) * batchSize;
     if (batchItems.length === 0) {
-      return { questions: [], totalGenerated: 0, requestedCount: targetQuestionCount, hasMore: false, batchIndex, mode };
+      return { questions: [], totalGenerated: 0, requestedCount: extracted.length, hasMore: false, batchIndex, mode };
     }
 
     const answerContext = chunks.slice(0, 18).map((chunk, index) =>
       `[Course source ${index + 1}: ${chunk.filename}, page/slide ${chunk.pageOrSlide}]\\n${chunk.text}`
     ).join('\\n\\n---\\n\\n');
     const answerTasks = batchItems.map(({ paper, item }, index) => ({
-      index, question: item.prompt, type: item.type, marks: item.allocatedMarks || 2,
-      options: item.options || [], paperTitle: paper.title || paper.filename,
+      index,
+      question: item.prompt,
+      questionNumber: item.questionNumber,
+      section: item.section,
+      sourcePage: item.sourcePage,
+      type: item.type,
+      marks: item.allocatedMarks || 2,
+      options: item.options || [],
+      paperTitle: paper.title || paper.filename,
     }));
     const answerPrompt = buildActualPastPaperAnswerPrompt(answerTasks, answerContext);
 
@@ -575,7 +618,8 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
 
     return {
       questions, totalGenerated: questions.length, requestedCount: targetQuestionCount,
-      hasMore: actualOffset + questions.length < extracted.length && alreadyGeneratedCount + questions.length < targetQuestionCount,
+      hasMore: actualOffset + batchItems.length < extracted.length,
+      requestedCount: extracted.length,
       batchIndex, mode,
     };
   }
