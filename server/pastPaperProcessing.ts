@@ -217,13 +217,33 @@ async function extractQuestionsWithAI(
   });
 }
 
+export function identifyPastPaperPagesNeedingReview(
+  segments: Array<{ text: string; pageOrSlide: number }>,
+  pageCount: number
+): number[] {
+  const textByPage = new Map<number, string>();
+  for (const segment of segments) {
+    const page = Number(segment.pageOrSlide);
+    if (!Number.isInteger(page) || page < 1) continue;
+    textByPage.set(page, [textByPage.get(page) || '', String(segment.text || '')].join(' ').trim());
+  }
+
+  const totalPages = Number.isFinite(pageCount) ? Math.max(1, Math.floor(pageCount)) : 1;
+  const reviewPages: number[] = [];
+  for (let page = 1; page <= totalPages; page += 1) {
+    // Very little extracted text can indicate a blank page, image-only page, or OCR failure.
+    if ((textByPage.get(page) || '').replace(/\\s+/g, ' ').trim().length < 20) reviewPages.push(page);
+  }
+  return reviewPages;
+}
+
 export async function processPastPaperFile(
   filename: string,
   mimeType: string,
   buffer?: Buffer,
   textPayload?: string,
   precomputedBase64?: string
-): Promise<{ text: string; questions: PastPaperQuestionStructure[]; pageCount: number; year?: string; term?: string }> {
+): Promise<{ text: string; questions: PastPaperQuestionStructure[]; pageCount: number; pagesNeedingReview: number[]; year?: string; term?: string }> {
   // Reuse the same PDF, Word, PowerPoint, image and OCR pipeline as course materials.
   const extracted = await extractContent(filename, mimeType, buffer, textPayload, precomputedBase64);
   const text = extracted.fullText;
@@ -244,10 +264,17 @@ export async function processPastPaperFile(
     if (aiQuestions.length > 0) questions = aiQuestions;
   }
 
+  // Keep the source page order stable even when AI extraction ran in batches.
+  questions = questions.map((question, originalIndex) => ({ question, originalIndex }))
+    .sort((a, b) => (a.question.sourcePage || 1) - (b.question.sourcePage || 1) || a.originalIndex - b.originalIndex)
+    .map(({ question }) => question);
+  const pagesNeedingReview = identifyPastPaperPagesNeedingReview(segments, extracted.pageCount);
+
   return {
     text,
     questions,
     pageCount: extracted.pageCount,
+    pagesNeedingReview,
     year: metadata.year,
     term: metadata.term,
   };
