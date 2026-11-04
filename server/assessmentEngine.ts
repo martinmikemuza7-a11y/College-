@@ -287,6 +287,9 @@ export function buildActualPastPaperAnswerPrompt(
     marks: number;
     options: string[];
     paperTitle: string;
+    questionNumber?: string;
+    section?: string;
+    sourcePage?: number;
   }>,
   answerContext: string
 ): string {
