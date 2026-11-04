@@ -303,7 +303,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.match(prompt, /Section B/);
     assert.match(prompt, /sourcePage/);
     assert.match(prompt, /Read every available page\/slide/);
-    assert.match(prompt, /calculation steps/);
+    assert.match(prompt, /each calculation step|arithmetic steps/);
     assert.match(prompt, /Short essay:/);
   });
 
