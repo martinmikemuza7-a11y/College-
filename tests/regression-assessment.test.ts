@@ -14,6 +14,7 @@ import {
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
 import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions } from '../server/pastPaperProcessing.js';
+import { UNIVERSAL_PAST_PAPER_ANSWER_POLICY } from '../server/pastPaperAnswerInstructions.js';
 
 // Initialize in-memory database
 initDb();
@@ -169,6 +170,20 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
         'Continuation must not repeat a previously delivered question'
       );
     }
+  });
+
+
+  it('Universal past-paper answer prompt preserves complete-paper and answer-format requirements', () => {
+    const prompt = buildActualPastPaperAnswerPrompt([{
+      index: 0, question: 'Explain the concept of psychology.', questionNumber: '2(b)',
+      section: 'Section B', sourcePage: 3, type: 'short_essay', marks: 5,
+      options: [], paperTitle: 'Psychology Examination',
+    }], '');
+    assert.ok(prompt.includes(UNIVERSAL_PAST_PAPER_ANSWER_POLICY));
+    assert.ok(prompt.includes('questionNumber'));
+    assert.ok(prompt.includes('sourcePage'));
+    assert.ok(prompt.includes('No course notes are available'));
+    assert.ok(prompt.includes('Mathematics/statistics'));
   });
 
   it('Past-paper extraction preserves original question stems and MCQ options without inventing questions', () => {
