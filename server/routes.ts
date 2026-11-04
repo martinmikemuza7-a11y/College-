@@ -669,9 +669,14 @@ router.post('/past-papers/upload', async (req, res) => {
       extractedTextLength: processed.text.length,
       extractedQuestions: processed.questions,
       status: 'ready',
-      statusMessage: processed.questions.length > 0
-        ? `Extracted ${processed.questions.length} original examination questions`
-        : 'The file was read, but no question structures were confidently identified. Check the scan quality or upload a clearer copy.',
+      statusMessage: [
+        processed.questions.length > 0
+          ? `Extracted ${processed.questions.length} original examination questions`
+          : 'The file was read, but no question structures were confidently identified.',
+        processed.pagesNeedingReview.length > 0
+          ? `Please review page(s) ${processed.pagesNeedingReview.join(', ')}: little or no text could be extracted. Upload a clearer scan if these pages contain questions.`
+          : '',
+      ].filter(Boolean).join(' '),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
