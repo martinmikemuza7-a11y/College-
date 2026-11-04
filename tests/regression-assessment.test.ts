@@ -207,7 +207,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.strictEqual(subquestions.questions[2].prompt, 'State one benefit of using functions.');
 
     const repeatedPrompts = parsePastPaperText(
-      'Question 1: Define psychology.\\nQuestion 2: Define psychology.',
+      'Question 1: Define psychology.\nQuestion 2: Define psychology.',
       'repeated_questions.txt'
     );
     assert.strictEqual(repeatedPrompts.questions.length, 2, 'Same wording under different printed question numbers must be preserved');
@@ -251,7 +251,7 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     const repeated = normalizeAIExtractedPastPaperQuestions([
       { questionNumber: '1', prompt: 'Define psychology.', sourceQuote: 'Question 1: Define psychology.' },
       { questionNumber: '2', prompt: 'Define psychology.', sourceQuote: 'Question 2: Define psychology.' },
-    ], 'Question 1: Define psychology.\\nQuestion 2: Define psychology.');
+    ], 'Question 1: Define psychology.\nQuestion 2: Define psychology.');
     assert.strictEqual(repeated.length, 2, 'AI extraction must preserve separately numbered repeated questions');
   });
 
@@ -299,10 +299,10 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.match(prompt, /general academic knowledge and careful subject reasoning/);
     assert.match(prompt, /Do not pretend that an uploaded note supports the answer/);
     assert.match(prompt, /canAnswer/);
-    assert.match(prompt, /2\\(b\\)/);
+    assert.match(prompt, /2\(b\)/);
     assert.match(prompt, /Section B/);
     assert.match(prompt, /sourcePage/);
-    assert.match(prompt, /Read every available page\\/slide/);
+    assert.match(prompt, /Read every available page\/slide/);
     assert.match(prompt, /calculation steps/);
     assert.match(prompt, /Short essay:/);
   });
