@@ -614,6 +614,7 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
         verificationNote: answerSourceNote,
         mode: 'actual_past_paper', sourceExamTitle: paper.title || paper.filename,
         sourceQuestionNumber: item.questionNumber, sourceSection: item.section,
+        sourceQuestionPage: item.sourcePage,
       };
     });
 
