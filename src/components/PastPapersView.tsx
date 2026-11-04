@@ -333,7 +333,7 @@ export const PastPapersView: React.FC<PastPapersViewProps> = ({
                     className="w-full py-2 px-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Practice AI Exam (Notes Grounded)</span>
+                    <span>Solve Original Paper (All Questions &amp; Answers)</span>
                   </button>
                 )}
 
@@ -428,7 +428,7 @@ export const PastPapersView: React.FC<PastPapersViewProps> = ({
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Calibrate Mock Exam</span>
+                    <span>Solve All Questions &amp; Answers</span>
                   </button>
                 )}
                 <button
