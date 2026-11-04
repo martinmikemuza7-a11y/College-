@@ -618,9 +618,8 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
     });
 
     return {
-      questions, totalGenerated: questions.length, requestedCount: targetQuestionCount,
+      questions, totalGenerated: questions.length, requestedCount: extracted.length,
       hasMore: actualOffset + batchItems.length < extracted.length,
-      requestedCount: extracted.length,
       batchIndex, mode,
     };
   }
