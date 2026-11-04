@@ -74,9 +74,9 @@ export async function extractContent(
           pageCount = parsed.total || parsed.pages.length || 1;
           for (const p of parsed.pages) {
             const pText = (p.text || '').trim();
-            if (pText.length > 10) {
-              segments.push({ text: pText, pageOrSlide: p.num || 1 });
-            }
+            // Retain empty/short pages too: downstream past-paper processing
+            // can then tell the user which pages may need a clearer scan.
+            segments.push({ text: pText, pageOrSlide: p.num || segments.length + 1 });
           }
         }
       } catch (pdfErr) {
