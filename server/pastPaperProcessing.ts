@@ -160,7 +160,6 @@ Rules:
 - Keep MCQ answer options separate in their original order and wording.
 - Include marks only when visible in the source.
 - The supplied text is labelled with [Page N] markers. Set sourcePage for every extracted question to the page where that question begins; do not leave it blank when the marker is available.
-- Include marks only when visible in the source.
 - sourceQuote MUST be one contiguous verbatim excerpt from the supplied text containing the complete question prompt and any options returned for it. It is used to verify that the item really exists in the paper.
 - If a line is unreadable or a question cannot be confidently separated from instructions, omit it rather than guessing.
 - Do not solve or answer any question.
