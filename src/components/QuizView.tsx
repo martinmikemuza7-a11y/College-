@@ -795,10 +795,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
                 {generationMode === 'actual_past_paper' && <span className="w-2 h-2 rounded-full bg-emerald-600" />}
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Asks the questions extracted from your uploaded past papers, preserving their wording and marks. Course notes are used to prepare answers.
+                Solves every extracted original question in paper order, preserving its wording, section, options, and marks. Course notes are checked first when available; otherwise answers use clearly labelled general academic knowledge.
               </p>
               <div className="mt-2 text-[11px] font-semibold text-emerald-700">
-                {availablePastPapers.reduce((total, paper) => total + (paper.extractedQuestions?.length || 0), 0)} extracted exam questions available
+                {actualPastPaperQuestionCount} extracted exam questions selected
               </div>
             </button>
 
@@ -852,7 +852,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
           </div>
         )}
 
-        {materialsList.length === 0 && (
+        {materialsList.length === 0 && generationMode !== 'actual_past_paper' && (
           <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -876,7 +876,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
         <div className="pt-2 border-t border-slate-100 space-y-3">
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">
-              {generationMode !== 'notes_based' ? 'Select Past Paper & Notes Sources' : 'Select Notes Source Scope'}
+              {generationMode === 'actual_past_paper' ? 'Select Original Past Paper(s) and Optional Notes' : generationMode !== 'notes_based' ? 'Select Past Paper & Notes Sources' : 'Select Notes Source Scope'}
             </span>
             <span className="text-[11px] text-slate-400">
               Only documents from {activeCourse.code} are included
