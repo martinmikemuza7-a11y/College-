@@ -98,6 +98,17 @@ export function normalizeAIExtractedPastPaperQuestions(
     const pageValue = Number(row.sourcePage ?? row.page);
     const questionNumber = String(row.questionNumber || row.number || output.length + 1).trim();
 
+    // AI may omit page numbers when a batch contains several pages. Recover
+    // provenance by locating the verified verbatim source quote inside the
+    // page-labelled batch instead of assigning every question to its first page.
+    const pageBlocks = [...String(sourceText).matchAll(/(?:^|\\n)\\[Page (\\d+)\\]\\s*\\n([\\s\\S]*?)(?=\\n\\[Page \\d+\\]\\s*\\n|$)/gi)];
+    const quotePage = pageBlocks.find((match) =>
+      normalizePaperText(match[2]).includes(normalizedQuote)
+    );
+    const inferredPage = quotePage ? Number(quotePage[1]) : undefined;
+    const suppliedPage = Number.isFinite(pageValue) && pageValue > 0 ? Math.floor(pageValue) : undefined;
+    const sourcePage = inferredPage || suppliedPage;
+
     output.push({
       questionNumber,
       section: String(row.section || 'General Section').trim(),
@@ -106,7 +117,7 @@ export function normalizeAIExtractedPastPaperQuestions(
       options: verifiedOptions,
       allocatedMarks: Number.isFinite(markValue) && markValue > 0 ? Math.min(100, Math.floor(markValue)) : (type === 'short_essay' ? 5 : 2),
       markingGuide: 'Award marks for a correct answer that addresses the original examination prompt.',
-      sourcePage: Number.isFinite(pageValue) && pageValue > 0 ? Math.floor(pageValue) : undefined,
+      sourcePage,
     });
     seen.add(normalizedPrompt);
   }
@@ -196,10 +207,7 @@ async function extractQuestionsWithAI(
         });
         if (!response) return [];
         const rows = normalizeAIExtractedPastPaperQuestions(response, batch.sourceText);
-        return rows.map((row) => ({
-          ...row,
-          sourcePage: row.sourcePage || batch.pageNumbers[0] || 1,
-        }));
+        return rows;
       } catch (error) {
         console.warn('[Past Papers] AI-assisted question extraction failed:', error);
         return [];
