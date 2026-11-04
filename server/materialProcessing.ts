@@ -116,7 +116,13 @@ export async function extractContent(
 
           const ocrText = response.text || '';
           if (ocrText.trim().length > 20) {
-            return parseTextIntoSegments(ocrText);
+            const ocrExtracted = parseTextIntoSegments(ocrText);
+            // Preserve the PDF parser's physical page count even if OCR omits
+            // an unreadable page or fails to emit a [Page N] marker for it.
+            return {
+              ...ocrExtracted,
+              pageCount: Math.max(pageCount, ocrExtracted.pageCount),
+            };
           }
         } catch (ocrErr) {
           console.warn('[PDF OCR] Vision extraction failed:', ocrErr);
