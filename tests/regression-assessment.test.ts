@@ -13,7 +13,7 @@ import {
   buildActualPastPaperAnswerPrompt,
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
-import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions } from '../server/pastPaperProcessing.js';
+import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions, identifyPastPaperPagesNeedingReview } from '../server/pastPaperProcessing.js';
 import { UNIVERSAL_PAST_PAPER_ANSWER_POLICY } from '../server/pastPaperAnswerInstructions.js';
 
 // Initialize in-memory database
@@ -184,6 +184,23 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.ok(prompt.includes('sourcePage'));
     assert.ok(prompt.includes('No course notes are available'));
     assert.ok(prompt.includes('Mathematics/statistics'));
+  });
+
+  it('Past-paper extraction flags pages with missing or very little readable text', () => {
+    assert.deepStrictEqual(
+      identifyPastPaperPagesNeedingReview([
+        { pageOrSlide: 1, text: 'Question 1: Define psychology and explain its scope.' },
+        { pageOrSlide: 3, text: '' },
+      ], 3),
+      [2, 3]
+    );
+    assert.deepStrictEqual(
+      identifyPastPaperPagesNeedingReview([
+        { pageOrSlide: 1, text: 'Question 1: Define psychology and explain its scope.' },
+        { pageOrSlide: 2, text: 'Question 2: Explain structuralism in psychology.' },
+      ], 2),
+      []
+    );
   });
 
   it('Past-paper extraction preserves original question stems and MCQ options without inventing questions', () => {
