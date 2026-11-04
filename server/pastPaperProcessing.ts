@@ -101,7 +101,7 @@ export function normalizeAIExtractedPastPaperQuestions(
     // AI may omit page numbers when a batch contains several pages. Recover
     // provenance by locating the verified verbatim source quote inside the
     // page-labelled batch instead of assigning every question to its first page.
-    const pageBlocks = [...String(sourceText).matchAll(/(?:^|\\n)\\[Page (\\d+)\\]\\s*\\n([\\s\\S]*?)(?=\\n\\[Page \\d+\\]\\s*\\n|$)/gi)];
+    const pageBlocks = [...String(sourceText).matchAll(/(?:^|\n)\[Page (\d+)\]\s*\n([\s\S]*?)(?=\n\[Page \d+\]\s*\n|$)/gi)];
     const quotePage = pageBlocks.find((match) =>
       normalizePaperText(match[2]).includes(normalizedQuote)
     );
