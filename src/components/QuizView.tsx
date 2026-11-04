@@ -110,7 +110,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
   // Generation Mode: 'past_paper' uses past papers for question structure & notes for factual answers
   // 'notes_based' generates questions directly from course notes
   const [generationMode, setGenerationMode] = useState<'actual_past_paper' | 'past_paper' | 'notes_based'>(
-    initialPastPaperId ? 'past_paper' : 'past_paper'
+    initialPastPaperId ? 'actual_past_paper' : 'past_paper'
   );
 
   // View Layout: 'sheet' displays all questions first without answers (Requirement 3)
@@ -158,6 +158,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const [selectedPastPaperIds, setSelectedPastPaperIds] = useState<string[]>(
     initialPastPaperId ? [initialPastPaperId] : []
   );
+  const actualPastPaperQuestionCount = availablePastPapers
+    .filter((paper) => selectedPastPaperIds.length === 0 || selectedPastPaperIds.includes(paper.id))
+    .reduce((total, paper) => total + (paper.extractedQuestions?.length || 0), 0);
 
   // Explicit Cross-Course Multi-Select (Course Isolation enforcement)
   const [enableCrossCourse, setEnableCrossCourse] = useState(false);
@@ -190,8 +193,8 @@ export const QuizView: React.FC<QuizViewProps> = ({
   useEffect(() => {
     if (initialPastPaperId) {
       setSelectedPastPaperIds([initialPastPaperId]);
-      setGenerationMode('past_paper');
-      setIsMockExam(true);
+      setGenerationMode('actual_past_paper');
+      setIsMockExam(false);
     }
   }, [initialPastPaperId]);
 
@@ -279,6 +282,13 @@ export const QuizView: React.FC<QuizViewProps> = ({
   const handleGenerateQuiz = async () => {
     if (!activeCourse || isGenerating) return;
 
+    // Actual-paper mode solves the extracted original questions and may use
+    // general academic knowledge when the student has not uploaded notes.
+    if (generationMode === 'actual_past_paper' && actualPastPaperQuestionCount === 0) {
+      setErrorMessage('No questions were confidently extracted from the selected past paper. Check its upload status and scan quality, then upload a clearer copy. The app will not invent questions.');
+      return;
+    }
+
     // Guardrail: Check for required materials based on mode
     if (generationMode !== 'notes_based') {
       if (availablePastPapers.length === 0) {
@@ -287,9 +297,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
         );
         return;
       }
-      if (materialsList.length === 0) {
+      if (generationMode !== 'actual_past_paper' && materialsList.length === 0) {
         setErrorMessage(
-          `No course notes or lecture documents are available for ${activeCourse.code}. Past Paper Practice requires course documents to provide verified factual answers. Please upload your lecture notes or slides first.`
+          `No course notes or lecture documents are available for ${activeCourse.code}. Past-paper-style practice needs course materials. Upload lecture notes or switch to Original Past Paper Answers, which can also use clearly labelled general academic knowledge.`
         );
         return;
       }
@@ -305,7 +315,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
     setIsGenerating(true);
     setGenerationProgress(
       generationMode === 'actual_past_paper'
-        ? 'Loading original past-paper questions and preparing note-grounded answers…'
+        ? 'Reading the full selected paper and preparing an answer for every extracted question…'
         : generationMode === 'past_paper'
         ? 'Calibrating question styles from past papers and grounding answers in course notes…'
         : 'Synthesizing practice questions directly from course lecture notes…'
@@ -314,14 +324,14 @@ export const QuizView: React.FC<QuizViewProps> = ({
     setQuestions([]);
     setCurrentIndex(0);
     setSheetAnswers({});
-    setShowAnswerKey(false);
+    setShowAnswerKey(generationMode === 'actual_past_paper');
     resetQuestionInputStates();
     setShowExamFinishedModal(false);
     setMissedQuestions([]);
     setIsCurrentAnswerCorrect(null);
 
     const typesToRequest = selectedQuestionType === 'all' ? undefined : [selectedQuestionType];
-    const targetCount = questionCount;
+    const targetCount = generationMode === 'actual_past_paper' ? actualPastPaperQuestionCount : questionCount;
     let accumulated: QuizQuestion[] = [];
     let currentBatchIndex = 0;
     let moreAvailable = true;
@@ -334,7 +344,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
           accumulated.length > 0
             ? `Preparing questions in batches (${accumulated.length} of ${targetCount} ready)…`
             : generationMode === 'actual_past_paper'
-            ? 'Loading original exam questions and preparing answers…'
+            ? 'Answering each original question in paper order…'
             : generationMode === 'past_paper'
             ? 'Styling questions from past exams and retrieving verified answers from notes…'
             : 'Synthesizing verified questions from course notes and slides…'
@@ -370,7 +380,10 @@ export const QuizView: React.FC<QuizViewProps> = ({
         const newlyUniqueQuestions: QuizQuestion[] = [];
         const existingQuestionTexts = accumulated.map((question) => question.question);
         for (const candidate of res.questions) {
-          if (!isRepeatedQuestion(candidate.question, [...existingQuestionTexts, ...newlyUniqueQuestions.map((q) => q.question)])) {
+          // Original exam papers may intentionally repeat a question in a
+          // different section/year. Preserve every printed item in this mode.
+          if (generationMode === 'actual_past_paper' ||
+            !isRepeatedQuestion(candidate.question, [...existingQuestionTexts, ...newlyUniqueQuestions.map((q) => q.question)])) {
             newlyUniqueQuestions.push(candidate);
           }
         }
@@ -390,9 +403,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
       if (accumulated.length > 0) {
         if (accumulated.length < targetCount) {
-          setErrorMessage(
-            `Generated ${accumulated.length} unique questions out of ${targetCount} requested. The selected material may not contain enough distinct examinable concepts. Select more course documents or upload additional notes to broaden coverage.`
-          );
+          setErrorMessage(generationMode === 'actual_past_paper'
+            ? `Answered ${accumulated.length} of ${targetCount} extracted questions. Some paper items were not returned; check the paper extraction and try uploading a clearer copy.`
+            : `Generated ${accumulated.length} unique questions out of ${targetCount} requested. The selected material may not contain enough distinct examinable concepts. Select more course documents or upload additional notes to broaden coverage.`);
         }
         if (isMockExam) {
           setMockTimeRemaining(mockExamDuration * 60);
@@ -400,9 +413,9 @@ export const QuizView: React.FC<QuizViewProps> = ({
           setExamResults({ correctCount: 0, totalCount: accumulated.length, marksObtained: 0, totalMarks });
         }
       } else {
-        setErrorMessage(
-          'No questions could be generated. Ensure documents in this course contain readable text passages.'
-        );
+        setErrorMessage(generationMode === 'actual_past_paper'
+          ? 'No original questions could be answered. Check that the selected paper contains readable, extracted questions.'
+          : 'No questions could be generated. Ensure documents in this course contain readable text passages.');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -427,7 +440,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
         mode: generationMode,
         selectedDocumentIds: selectedDocumentIds.length > 0 ? selectedDocumentIds : undefined,
         pastPaperIds:
-          generationMode === 'past_paper'
+          generationMode !== 'notes_based'
             ? selectedPastPaperIds.length > 0
               ? selectedPastPaperIds
               : availablePastPapers.map((p) => p.id)
@@ -988,6 +1001,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
             <label className="block font-semibold text-slate-700 mb-1">Question Type</label>
             <select
               value={selectedQuestionType}
+              disabled={generationMode === 'actual_past_paper'}
               onChange={(e: any) => setSelectedQuestionType(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer"
             >
@@ -1004,6 +1018,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
             <label className="block font-semibold text-slate-700 mb-1">Question Style Focus</label>
             <select
               value={questionStyle}
+              disabled={generationMode === 'actual_past_paper'}
               onChange={(e: any) => setQuestionStyle(e.target.value)}
               className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer"
             >
@@ -1017,20 +1032,26 @@ export const QuizView: React.FC<QuizViewProps> = ({
 
           <div>
             <label className="block font-semibold text-slate-700 mb-1">Question Quantity</label>
-            <select
-              value={questionCount}
-              onChange={(e) => setQuestionCount(parseInt(e.target.value, 10))}
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer"
-            >
-              <option value={3}>3 Questions</option>
-              <option value={5}>5 Questions</option>
-              <option value={8}>8 Questions</option>
-              <option value={10}>10 Questions</option>
-              <option value={15}>15 Questions (Batched)</option>
-              <option value={20}>20 Questions (Batched)</option>
-              <option value={25}>25 Questions (Comprehensive)</option>
-              <option value={30}>30 Questions (Full Paper Coverage)</option>
-            </select>
+            {generationMode === 'actual_past_paper' ? (
+              <div className="w-full px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 font-semibold">
+                All {actualPastPaperQuestionCount} extracted questions
+              </div>
+            ) : (
+              <select
+                value={questionCount}
+                onChange={(e) => setQuestionCount(parseInt(e.target.value, 10))}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium cursor-pointer"
+              >
+                <option value={3}>3 Questions</option>
+                <option value={5}>5 Questions</option>
+                <option value={8}>8 Questions</option>
+                <option value={10}>10 Questions</option>
+                <option value={15}>15 Questions (Batched)</option>
+                <option value={20}>20 Questions (Batched)</option>
+                <option value={25}>25 Questions (Comprehensive)</option>
+                <option value={30}>30 Questions (Full Paper Coverage)</option>
+              </select>
+            )}
           </div>
         </div>
 
@@ -1040,6 +1061,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
             <input
               type="text"
               placeholder="Optional topic focus (e.g. Attention Mechanisms, Mitochondria, Constitutional Law)…"
+              disabled={generationMode === 'actual_past_paper'}
               value={topicFocus}
               onChange={(e) => setTopicFocus(e.target.value)}
               className="w-full sm:flex-1 px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-rose-500 outline-none"
@@ -1068,7 +1090,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                   <Play className="w-4 h-4" />
                   <span>
                     {generationMode === 'actual_past_paper'
-                      ? `Practise Original Past Paper Questions (up to ${questionCount})`
+                      ? `Solve Original Past Paper (${actualPastPaperQuestionCount} Questions & Answers)`
                       : generationMode === 'past_paper'
                       ? `Generate Exam Practice (${questionCount} Questions)`
                       : `Generate Notes Quiz (${questionCount} Questions)`}
