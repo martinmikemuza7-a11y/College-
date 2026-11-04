@@ -300,6 +300,9 @@ export function buildActualPastPaperAnswerPrompt(
 
   return `You are an experienced university tutor preparing model answers for actual questions extracted from an uploaded past examination paper. Preserve every question exactly as supplied; do not rewrite or replace the questions.
 
+UNIVERSAL PAST-PAPER POLICY:
+${UNIVERSAL_PAST_PAPER_ANSWER_POLICY}
+
 ${sourceInstructions}
 
 For every question:
