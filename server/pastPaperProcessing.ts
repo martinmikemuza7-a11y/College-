@@ -20,6 +20,36 @@ function normalizePaperText(value: string): string {
     .trim();
 }
 
+function questionIdentity(question: PastPaperQuestionStructure): string {
+  return [
+    question.sourcePage || 0,
+    normalizePaperText(question.section || ''),
+    normalizePaperText(question.questionNumber || ''),
+  ].join('|');
+}
+
+/**
+ * Combines deterministic and AI-assisted extraction without losing repeated
+ * exam items. A repeated prompt with a different number/section/page is a
+ * distinct printed question, not a duplicate to be discarded.
+ */
+export function mergePastPaperQuestions(
+  primary: PastPaperQuestionStructure[],
+  supplemental: PastPaperQuestionStructure[],
+): PastPaperQuestionStructure[] {
+  const merged = new Map<string, PastPaperQuestionStructure>();
+  for (const question of primary) merged.set(questionIdentity(question), question);
+  for (const question of supplemental) {
+    const key = questionIdentity(question);
+    if (!merged.has(key)) merged.set(key, question);
+  }
+  return [...merged.values()].sort((left, right) => {
+    const pageDifference = (left.sourcePage || 0) - (right.sourcePage || 0);
+    if (pageDifference !== 0) return pageDifference;
+    return String(left.questionNumber).localeCompare(String(right.questionNumber), undefined, { numeric: true, sensitivity: 'base' });
+  });
+}
+
 function inferQuestionType(prompt: string, options?: string[]): QuestionType {
   if (options && options.length >= 2) return 'multiple_choice';
   if (/\btrue\s*(?:or|\/)\s*false\b/i.test(prompt)) return 'true_false';
@@ -73,11 +103,17 @@ export function normalizeAIExtractedPastPaperQuestions(
     const sourceQuote = String(row.sourceQuote || row.sourceText || '').trim();
     const normalizedPrompt = normalizePaperText(prompt);
     const normalizedQuote = normalizePaperText(sourceQuote);
+    const questionNumber = String(row.questionNumber || row.number || output.length + 1).trim();
+    const section = String(row.section || 'General Section').trim();
+    const markValue = Number(row.allocatedMarks ?? row.marks);
+    const pageValue = Number(row.sourcePage ?? row.page);
+    const sourcePage = Number.isFinite(pageValue) && pageValue > 0 ? Math.floor(pageValue) : undefined;
+    const identity = [sourcePage || 0, normalizePaperText(section), normalizePaperText(questionNumber)].join('|');
 
     if (prompt.length < 8 || !normalizedPrompt || !normalizedQuote) continue;
     // Exact normalized source matching prevents generated or paraphrased prompts.
     if (!normalizedSource.includes(normalizedQuote) || !normalizedQuote.includes(normalizedPrompt)) continue;
-    if (seen.has(normalizedPrompt)) continue;
+    if (seen.has(identity)) continue;
 
     const rawOptions = Array.isArray(row.options)
       ? row.options.map((option: unknown) => String(option || '').trim()).filter(Boolean)
@@ -94,21 +130,17 @@ export function normalizeAIExtractedPastPaperQuestions(
         ? typeValue
         : inferQuestionType(prompt);
 
-    const markValue = Number(row.allocatedMarks ?? row.marks);
-    const pageValue = Number(row.sourcePage ?? row.page);
-    const questionNumber = String(row.questionNumber || row.number || output.length + 1).trim();
-
     output.push({
       questionNumber,
-      section: String(row.section || 'General Section').trim(),
+      section,
       type,
       prompt,
       options: verifiedOptions,
       allocatedMarks: Number.isFinite(markValue) && markValue > 0 ? Math.min(100, Math.floor(markValue)) : (type === 'short_essay' ? 5 : 2),
       markingGuide: 'Award marks for a correct answer that addresses the original examination prompt.',
-      sourcePage: Number.isFinite(pageValue) && pageValue > 0 ? Math.floor(pageValue) : undefined,
+      sourcePage,
     });
-    seen.add(normalizedPrompt);
+    seen.add(identity);
   }
 
   return output;
@@ -210,7 +242,7 @@ async function extractQuestionsWithAI(
 
   const seen = new Set<string>();
   return extracted.filter((question) => {
-    const key = normalizePaperText(question.prompt);
+    const key = questionIdentity(question);
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -235,13 +267,14 @@ export async function processPastPaperFile(
     .join('\n\n');
 
   const metadata = parsePastPaperText(pageAwareText || text, filename);
+  // Deterministic parsing is the baseline. AI-assisted extraction also reviews
+  // every extracted page/slide so it can recover clearly printed sub-questions
+  // the lightweight parser may not recognize. Its sourceQuote is checked
+  // against the uploaded text before any supplemental item is accepted.
   let questions = metadata.questions;
-
-  // Deterministic parsing is preferred. Use Gemini only when the paper text was
-  // extracted but the parser could not identify question structures.
-  if (questions.length === 0 && pageAwareText.trim().length >= 40) {
+  if (pageAwareText.trim().length >= 40) {
     const aiQuestions = await extractQuestionsWithAI(segments);
-    if (aiQuestions.length > 0) questions = aiQuestions;
+    questions = mergePastPaperQuestions(metadata.questions, aiQuestions);
   }
 
   return {
@@ -328,7 +361,7 @@ function deduplicateExtractedQuestions(
 ): PastPaperQuestionStructure[] {
   const seen = new Set<string>();
   return questions.filter((question) => {
-    const key = normalizePaperText(question.prompt);
+    const key = questionIdentity(question);
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
