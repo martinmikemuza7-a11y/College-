@@ -213,6 +213,7 @@ export interface QuizQuestion {
   sourceExamTitle?: string;
   sourceQuestionNumber?: string;
   sourceSection?: string;
+  sourceQuestionPage?: number;
 }
 
 export interface SavedQuizMistake {
