@@ -499,8 +499,9 @@ export async function generateQuizQuestions(options: GenerateQuizOptions): Promi
         .filter((item) => typeof item.prompt === 'string' && item.prompt.trim().length > 0)
         .map((item) => ({ paper, item }))
     );
-    const batchItems = selectPastPaperQuestionBatch(extracted, batchIndex, batchSize);
-    const actualOffset = Math.max(0, Math.floor(batchIndex)) * batchSize;
+    const safeBatchIndex = Number.isFinite(batchIndex) ? Math.max(0, Math.floor(batchIndex)) : 0;
+    const batchItems = selectPastPaperQuestionBatch(extracted, safeBatchIndex, batchSize);
+    const actualOffset = safeBatchIndex * batchSize;
     if (batchItems.length === 0) {
       return { questions: [], totalGenerated: 0, requestedCount: extracted.length, hasMore: false, batchIndex, mode };
     }
