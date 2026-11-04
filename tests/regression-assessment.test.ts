@@ -11,9 +11,10 @@ import {
   sanitizeQuestionText,
   validateAndNormalizeQuestion,
   buildActualPastPaperAnswerPrompt,
+  selectPastPaperQuestionBatch,
 } from '../server/assessmentEngine.js';
 import { Material } from '../server/types.js';
-import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions } from '../server/pastPaperProcessing.js';
+import { parsePastPaperText, normalizeAIExtractedPastPaperQuestions, mergePastPaperQuestions } from '../server/pastPaperProcessing.js';
 
 // Initialize in-memory database
 initDb();
@@ -205,6 +206,12 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.strictEqual(subquestions.questions[1].prompt, 'Define a function.');
     assert.strictEqual(subquestions.questions[2].prompt, 'State one benefit of using functions.');
 
+    const repeatedPrompts = parsePastPaperText(
+      'Question 1: Define psychology.\\nQuestion 2: Define psychology.',
+      'repeated_questions.txt'
+    );
+    assert.strictEqual(repeatedPrompts.questions.length, 2, 'Same wording under different printed question numbers must be preserved');
+
     const unnumbered = parsePastPaperText(
       'This is an ordinary paragraph about functions and variables, not an actual exam question.',
       'not_a_paper.txt'
@@ -240,6 +247,39 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.strictEqual(normalized[0].prompt, 'Define psychology.');
     assert.deepStrictEqual(normalized[0].options, ['Study of mind and behaviour', 'Study of rocks']);
     assert.strictEqual(normalized[0].type, 'multiple_choice');
+
+    const repeated = normalizeAIExtractedPastPaperQuestions([
+      { questionNumber: '1', prompt: 'Define psychology.', sourceQuote: 'Question 1: Define psychology.' },
+      { questionNumber: '2', prompt: 'Define psychology.', sourceQuote: 'Question 2: Define psychology.' },
+    ], 'Question 1: Define psychology.\\nQuestion 2: Define psychology.');
+    assert.strictEqual(repeated.length, 2, 'AI extraction must preserve separately numbered repeated questions');
+  });
+
+  it('Actual past-paper batches cover the ordered source questions exactly once without deduplicating repeats', () => {
+    const source = Array.from({ length: 12 }, (_, index) => ({
+      questionNumber: String(index + 1),
+      prompt: index === 4 || index === 9 ? 'Repeated printed wording' : `Original prompt ${index + 1}`,
+    }));
+    const batches = [
+      ...selectPastPaperQuestionBatch(source, 0),
+      ...selectPastPaperQuestionBatch(source, 1),
+      ...selectPastPaperQuestionBatch(source, 2),
+    ];
+    assert.deepStrictEqual(batches, source);
+    assert.strictEqual(selectPastPaperQuestionBatch(source, 3).length, 0);
+  });
+
+  it('AI-assisted and deterministic extraction merge without dropping numbered questions', () => {
+    const primary = [
+      { questionNumber: '1', section: 'Section A', sourcePage: 1, type: 'short_answer' as const, prompt: 'Define psychology.' },
+      { questionNumber: '2', section: 'Section A', sourcePage: 1, type: 'short_answer' as const, prompt: 'Define psychology.' },
+    ];
+    const supplemental = [
+      { questionNumber: '1', section: 'Section A', sourcePage: 1, type: 'short_answer' as const, prompt: 'Define psychology.' },
+      { questionNumber: '3', section: 'Section A', sourcePage: 2, type: 'short_answer' as const, prompt: 'Explain structuralism.' },
+    ];
+    const merged = mergePastPaperQuestions(primary, supplemental);
+    assert.deepStrictEqual(merged.map((question) => question.questionNumber), ['1', '2', '3']);
   });
 
   it('Actual past-paper answer prompt allows reasoning when notes are unavailable', () => {
@@ -250,12 +290,21 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
       marks: 5,
       options: [],
       paperTitle: 'C++ examination',
+      questionNumber: '2(b)',
+      section: 'Section B',
+      sourcePage: 3,
     }], '');
 
     assert.match(prompt, /No course notes are available/);
     assert.match(prompt, /general academic knowledge and careful subject reasoning/);
     assert.match(prompt, /Do not pretend that an uploaded note supports the answer/);
     assert.match(prompt, /canAnswer/);
+    assert.match(prompt, /2\\(b\\)/);
+    assert.match(prompt, /Section B/);
+    assert.match(prompt, /sourcePage/);
+    assert.match(prompt, /Read every available page\\/slide/);
+    assert.match(prompt, /calculation steps/);
+    assert.match(prompt, /Short essay:/);
   });
 
   it('Actual past-paper answer prompt prioritizes notes but permits clearly labelled reasoning when they do not cover a question', () => {
