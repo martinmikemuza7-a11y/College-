@@ -1304,7 +1304,7 @@ export const QuizView: React.FC<QuizViewProps> = ({
                           </span>
                         )}
                         {q.mode === 'actual_past_paper' ? (
-                          <span className="font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md text-[10px]">Original: {q.sourceExamTitle || 'Past paper'}{q.sourceSection ? ` • ${q.sourceSection}` : ''}</span>
+                          <span className="font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md text-[10px]">Original: {q.sourceExamTitle || 'Past paper'}{q.sourceSection ? ` • ${q.sourceSection}` : ''}{q.sourceQuestionPage ? ` • Page ${q.sourceQuestionPage}` : ''}</span>
                         ) : q.mode === 'past_paper' ? (
                           <span className="font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md text-[10px]">Past Paper Calibrated</span>
                         ) : null}
