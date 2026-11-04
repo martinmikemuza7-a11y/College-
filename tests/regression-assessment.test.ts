@@ -274,6 +274,25 @@ describe('Study Buddy AI - Educational Assessment & Grounding Regression Suite',
     assert.strictEqual(normalized[0].type, 'multiple_choice');
   });
 
+  it('AI-assisted extraction assigns each question to the page containing its verified source quote', () => {
+    const source = [
+      '[Page 1]',
+      'Question 1: Define psychology and identify its main focus.',
+      '[Page 2]',
+      'Question 2: Explain structuralism and its role in early psychology.',
+    ].join('\\n');
+    const extracted = normalizeAIExtractedPastPaperQuestions([
+      {
+        questionNumber: '2',
+        prompt: 'Explain structuralism and its role in early psychology.',
+        sourceQuote: 'Question 2: Explain structuralism and its role in early psychology.',
+      },
+    ], source);
+
+    assert.strictEqual(extracted.length, 1);
+    assert.strictEqual(extracted[0].sourcePage, 2);
+  });
+
   it('Actual past-paper answer prompt allows reasoning when notes are unavailable', () => {
     const prompt = buildActualPastPaperAnswerPrompt([{
       index: 0,
